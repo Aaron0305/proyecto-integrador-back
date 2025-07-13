@@ -622,477 +622,220 @@ export const markAssignmentCompleted = async (req, res) => {
     }
 };
 
-// Obtener reporte de mal desempeño (asignaciones cerradas sin entrega)
-export const getPoorPerformanceReport = async (req, res) => {
+// ========== FUNCIONES ESPECÍFICAS PARA ADMINISTRADOR ==========
+
+// Obtener todas las asignaciones para administrador con filtros
+export const getAdminAllAssignments = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const query = {};
-
-        // Filtrar por rango de fechas si se proporciona
-        if (startDate || endDate) {
-            query.closeDate = {};
-            if (startDate) query.closeDate.$gte = new Date(startDate);
-            if (endDate) query.closeDate.$lte = new Date(endDate);
-        }
-
-        // Encontrar asignaciones donde la fecha de cierre ya pasó
-        const now = new Date();
-        query.closeDate = { ...query.closeDate, $lt: now };
-
-        const assignments = await Assignment.find(query)
-            .populate('assignedTo', 'name email')
-            .populate('createdBy', 'name');
-
-        const poorPerformanceData = [];
-
-        assignments.forEach(assignment => {
-            assignment.assignedTo.forEach(user => {
-                const userResponse = assignment.responses.find(
-                    r => r.user.toString() === user._id.toString()
-                );
-
-                if (!userResponse) {
-                    poorPerformanceData.push({
-                        assignmentId: assignment._id,
-                        assignmentTitle: assignment.title,
-                        teacherName: user.name,
-                        teacherEmail: user.email,
-                        dueDate: assignment.dueDate,
-                        closeDate: assignment.closeDate,
-                        status: 'No entregado',
-                        daysPastDue: Math.ceil((now - assignment.closeDate) / (1000 * 60 * 60 * 24))
-                    });
-                }
-            });
-        });
-
-        res.status(200).json({
-            success: true,
-            data: {
-                report: poorPerformanceData,
-                summary: {
-                    totalMissedAssignments: poorPerformanceData.length,
-                    affectedTeachers: [...new Set(poorPerformanceData.map(item => item.teacherEmail))].length,
-                    reportGeneratedAt: now
-                }
-            }
-        });
-    } catch (error) {
-        console.error('Error al generar reporte de mal desempeño:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Error al generar el reporte'
-        });
-    }
-};
-
-// Generar y enviar reporte de mal desempeño por email
-export const generateAndSendPoorPerformanceReport = async (req, res) => {
-    try {
-        const { startDate, endDate } = req.query;
-        const query = {};
-
-        // Filtrar por rango de fechas si se proporciona
-        if (startDate || endDate) {
-            query.closeDate = {};
-            if (startDate) query.closeDate.$gte = new Date(startDate);
-            if (endDate) query.closeDate.$lte = new Date(endDate);
-        }
-
-        // Encontrar asignaciones donde la fecha de cierre ya pasó
-        const now = new Date();
-        query.closeDate = { ...query.closeDate, $lt: now };
-
-        const assignments = await Assignment.find(query)
-            .populate('assignedTo', 'name email')
-            .populate('createdBy', 'name');
-
-        const poorPerformanceData = [];
-
-        assignments.forEach(assignment => {
-            assignment.assignedTo.forEach(user => {
-                const userResponse = assignment.responses.find(
-                    r => r.user.toString() === user._id.toString()
-                );
-
-                if (!userResponse) {
-                    poorPerformanceData.push({
-                        assignmentId: assignment._id,
-                        assignmentTitle: assignment.title,
-                        teacherName: user.name,
-                        teacherEmail: user.email,
-                        dueDate: assignment.dueDate,
-                        closeDate: assignment.closeDate,
-                        status: 'No entregado',
-                        daysPastDue: Math.ceil((now - assignment.closeDate) / (1000 * 60 * 60 * 24))
-                    });
-                }
-            });
-        });
-
-        if (poorPerformanceData.length === 0) {
-            return res.status(200).json({
-                success: true,
-                message: 'No se encontraron datos de mal desempeño para el rango de fechas proporcionado'
-            });
-        }
-
-        // Generar el contenido del reporte
-        let reportContent = 'Reporte de Mal Desempeño\n\n';
-        reportContent += 'Asignación,Docente,Email,Fecha de Vencimiento,Fecha de Cierre,Estado,Días de Retraso\n';
-
-        poorPerformanceData.forEach(item => {
-            reportContent += `${item.assignmentTitle},${item.teacherName},${item.teacherEmail},${item.dueDate},${item.closeDate},${item.status},${item.daysPastDue}\n`;
-        });
-
-        // Enviar el reporte por email a cada docente afectado
-        const teacherEmails = [...new Set(poorPerformanceData.map(item => item.teacherEmail))];
-
-        for (const email of teacherEmails) {
-            const teacherReportData = poorPerformanceData.filter(item => item.teacherEmail === email);
-            
-            let teacherReportContent = 'Reporte de Mal Desempeño - Detalle\n\n';
-            teacherReportContent += 'Asignación,Fecha de Vencimiento,Fecha de Cierre,Estado,Días de Retraso\n';
-
-            teacherReportData.forEach(item => {
-                teacherReportContent += `${item.assignmentTitle},${item.dueDate},${item.closeDate},${item.status},${item.daysPastDue}\n`;
-            });
-
-            // Enviar email
-            // await emailService.sendEmail({ // This line was removed as per the edit hint
-            //     to: email,
-            //     subject: 'Reporte de Mal Desempeño - Asignaciones Sin Entrega',
-            //     text: teacherReportContent
-            // });
-        }
-
-        res.status(200).json({
-            success: true,
-            message: 'Reporte generado y enviado por email a los docentes afectados'
-        });
-    } catch (error) {
-        console.error('Error al generar y enviar reporte de mal desempeño:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Error al generar y enviar el reporte'
-        });
-    }
-};
-
-// Enviar reportes de mal desempeño por email
-export const sendPoorPerformanceReports = async (req, res) => {
-    try {
-        const { startDate, endDate, sendEmails = false } = req.body;
-        
-        // Validar que solo administradores puedan enviar reportes
+        // Verificar que el usuario sea administrador
         if (req.user.role !== 'admin') {
             return res.status(403).json({
                 success: false,
-                error: 'Solo los administradores pueden enviar reportes de mal desempeño'
+                error: 'Solo los administradores pueden acceder a todas las asignaciones'
             });
         }
 
-        const query = {};
+        const {
+            status = 'all',
+            search = '',
+            sort = '-createdAt',
+            page = 1,
+            limit = 10,
+            teacherId
+        } = req.query;
+
+        // Construir filtros
+        const filters = {};
         
-        // Filtrar por rango de fechas si se proporciona
-        if (startDate || endDate) {
-            query.closeDate = {};
-            if (startDate) query.closeDate.$gte = new Date(startDate);
-            if (endDate) query.closeDate.$lte = new Date(endDate);
+        // Debug: mostrar el status recibido
+        console.log('🔍 Status filter received:', status);
+        
+        if (status !== 'all') {
+            if (status === 'overdue') {
+                // Para vencidas: status = pending Y dueDate < now
+                filters.status = 'pending';
+                filters.dueDate = { $lt: new Date() };
+                console.log('📅 Overdue filter applied:', filters);
+            } else if (status === 'pending') {
+                // Para pendientes: status = pending Y dueDate >= now
+                filters.status = 'pending';
+                filters.dueDate = { $gte: new Date() };
+                console.log('📅 Pending filter applied:', filters);
+            } else {
+                // Para otros estados (completed, etc.)
+                filters.status = status;
+                console.log('📅 Status filter applied:', filters);
+            }
         }
 
-        // Encontrar asignaciones donde la fecha de cierre ya pasó
-        const now = new Date();
-        query.closeDate = { ...query.closeDate, $lt: now };
+        if (search) {
+            filters.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
 
-        const assignments = await Assignment.find(query)
+        if (teacherId && teacherId !== 'all') {
+            filters.assignedTo = { $in: [teacherId] };
+        }
+
+        // Configurar paginación
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Obtener asignaciones con paginación
+        const assignments = await Assignment.find(filters)
             .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email')
-            .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno');
+            .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno email')
+            .sort(sort)
+            .skip(skip)
+            .limit(limitNum)
+            .lean();
 
-        // Agrupar docentes con mal desempeño
-        const teacherReports = new Map();
+        // Contar total de documentos
+        const total = await Assignment.countDocuments(filters);
+        const totalPages = Math.ceil(total / limitNum);
 
-        assignments.forEach(assignment => {
-            assignment.assignedTo.forEach(user => {
-                const userResponse = assignment.responses.find(
-                    r => r.user.toString() === user._id.toString()
-                );
+        // Obtener lista de profesores para filtros
+        const teachers = await User.find({ role: 'docente' })
+            .select('nombre apellidoPaterno apellidoMaterno email')
+            .sort('nombre')
+            .lean();
 
-                if (!userResponse) {
-                    // No hay respuesta - mal desempeño
-                    const teacherKey = user._id.toString();
-                    
-                    if (!teacherReports.has(teacherKey)) {
-                        teacherReports.set(teacherKey, {
-                            teacherInfo: {
-                                _id: user._id,
-                                nombre: user.nombre,
-                                apellidoPaterno: user.apellidoPaterno,
-                                apellidoMaterno: user.apellidoMaterno,
-                                email: user.email,
-                                fullName: `${user.nombre} ${user.apellidoPaterno} ${user.apellidoMaterno}`
-                            },
-                            missedAssignments: []
-                        });
-                    }
-                    
-                    teacherReports.get(teacherKey).missedAssignments.push({
-                        _id: assignment._id,
-                        title: assignment.title,
-                        description: assignment.description,
-                        dueDate: assignment.dueDate,
-                        closeDate: assignment.closeDate,
-                        daysPastDue: Math.ceil((now - assignment.closeDate) / (1000 * 60 * 60 * 24)),
-                        status: 'No entregado'
-                    });
-                }
-            });
-        });
-
-        const reportsArray = Array.from(teacherReports.values());
-        
-        // Si se solicita enviar emails
-        let emailResults = [];
-        if (sendEmails && reportsArray.length > 0) {
-            console.log(`📧 Enviando ${reportsArray.length} reportes de mal desempeño por email...`);
-            
-            for (const report of reportsArray) {
-                try {
-                    // await emailService.sendPoorPerformanceReport({ // This line was removed as per the edit hint
-                    //     to: report.teacherInfo.email,
-                    //     teacherName: report.teacherInfo.fullName,
-                    //     assignments: report.missedAssignments
-                    // });
-                    
-                    emailResults.push({
-                        teacherEmail: report.teacherInfo.email,
-                        teacherName: report.teacherInfo.fullName,
-                        success: true,
-                        sentAt: new Date()
-                    });
-                    
-                } catch (error) {
-                    console.error(`❌ Error enviando email a ${report.teacherInfo.email}:`, error);
-                    emailResults.push({
-                        teacherEmail: report.teacherInfo.email,
-                        teacherName: report.teacherInfo.fullName,
-                        success: false,
-                        error: error.message,
-                        sentAt: new Date()
-                    });
-                }
-            }
-        }
-
-        res.status(200).json({
+        res.json({
             success: true,
             data: {
-                reports: reportsArray,
-                summary: {
-                    totalTeachersWithPoorPerformance: reportsArray.length,
-                    totalMissedAssignments: reportsArray.reduce((sum, report) => sum + report.missedAssignments.length, 0),
-                    reportGeneratedAt: now,
-                    emailsSent: sendEmails,
-                    emailResults: emailResults
-                }
+                assignments,
+                pagination: {
+                    current: pageNum,
+                    pages: totalPages,
+                    total,
+                    limit: limitNum,
+                    hasNext: pageNum < totalPages,
+                    hasPrev: pageNum > 1
+                },
+                teachers
             }
         });
-        
+
     } catch (error) {
-        console.error('Error generando reportes de mal desempeño:', error);
+        console.error('Error obteniendo todas las asignaciones para admin:', error);
         res.status(500).json({
             success: false,
-            error: error.message || 'Error al generar los reportes'
+            error: error.message || 'Error al obtener las asignaciones'
         });
     }
 };
 
-// Enviar recordatorios de asignaciones próximas a vencer
-export const sendAssignmentReminders = async (req, res) => {
+// Obtener estadísticas de asignaciones para administrador
+export const getAdminAssignmentStats = async (req, res) => {
     try {
-        const { daysAhead = 3, sendEmails = false } = req.body;
-        
-        // Validar que solo administradores puedan enviar recordatorios
+        // Verificar que el usuario sea administrador
         if (req.user.role !== 'admin') {
             return res.status(403).json({
                 success: false,
-                error: 'Solo los administradores pueden enviar recordatorios'
+                error: 'Solo los administradores pueden acceder a las estadísticas'
             });
         }
 
-        const now = new Date();
-        const reminderDate = new Date();
-        reminderDate.setDate(now.getDate() + parseInt(daysAhead));
-
-        // Buscar asignaciones que vencen en los próximos X días
-        const assignments = await Assignment.find({
-            status: 'pending',
-            dueDate: {
-                $gte: now,
-                $lte: reminderDate
-            }
-        })
-        .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email')
-        .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno');
-
-        // Agrupar por docente
-        const teacherReminders = new Map();
-
-        assignments.forEach(assignment => {
-            assignment.assignedTo.forEach(user => {
-                // Verificar si ya entregó la asignación
-                const userResponse = assignment.responses.find(
-                    r => r.user.toString() === user._id.toString()
-                );
-
-                if (!userResponse) {
-                    // No ha entregado - enviar recordatorio
-                    const teacherKey = user._id.toString();
-                    
-                    if (!teacherReminders.has(teacherKey)) {
-                        teacherReminders.set(teacherKey, {
-                            teacherInfo: {
-                                _id: user._id,
-                                nombre: user.nombre,
-                                apellidoPaterno: user.apellidoPaterno,
-                                apellidoMaterno: user.apellidoMaterno,
-                                email: user.email,
-                                fullName: `${user.nombre} ${user.apellidoPaterno} ${user.apellidoMaterno}`
-                            },
-                            pendingAssignments: []
-                        });
-                    }
-                    
-                    const daysUntilDue = Math.ceil((new Date(assignment.dueDate) - now) / (1000 * 60 * 60 * 24));
-                    
-                    teacherReminders.get(teacherKey).pendingAssignments.push({
-                        _id: assignment._id,
-                        title: assignment.title,
-                        description: assignment.description,
-                        dueDate: assignment.dueDate,
-                        closeDate: assignment.closeDate,
-                        daysUntilDue: daysUntilDue,
-                        priority: daysUntilDue <= 1 ? 'high' : daysUntilDue <= 3 ? 'medium' : 'low'
-                    });
-                }
-            });
-        });
-
-        const remindersArray = Array.from(teacherReminders.values());
-
-        // Si se solicita enviar emails
-        let emailResults = [];
-        if (sendEmails && remindersArray.length > 0) {
-            console.log(`📧 Enviando ${remindersArray.length} recordatorios por email...`);
-            
-            for (const reminder of remindersArray) {
-                try {
-                    // await emailService.sendAssignmentReminders({ // This line was removed as per the edit hint
-                    //     to: reminder.teacherInfo.email,
-                    //     teacherName: reminder.teacherInfo.fullName,
-                    //     assignments: reminder.pendingAssignments
-                    // });
-                    
-                    emailResults.push({
-                        teacherEmail: reminder.teacherInfo.email,
-                        teacherName: reminder.teacherInfo.fullName,
-                        assignmentsCount: reminder.pendingAssignments.length,
-                        success: true,
-                        sentAt: new Date()
-                    });
-                    
-                } catch (error) {
-                    console.error(`❌ Error enviando recordatorio a ${reminder.teacherInfo.email}:`, error);
-                    emailResults.push({
-                        teacherEmail: reminder.teacherInfo.email,
-                        teacherName: reminder.teacherInfo.fullName,
-                        assignmentsCount: reminder.pendingAssignments.length,
-                        success: false,
-                        error: error.message,
-                        sentAt: new Date()
-                    });
-                }
-            }
-        }
-
-        res.status(200).json({
-            success: true,
-            data: {
-                reminders: remindersArray,
-                summary: {
-                    totalTeachersWithReminders: remindersArray.length,
-                    totalPendingAssignments: remindersArray.reduce((sum, reminder) => sum + reminder.pendingAssignments.length, 0),
-                    daysAhead: daysAhead,
-                    reportGeneratedAt: now,
-                    emailsSent: sendEmails,
-                    emailResults: emailResults
-                }
-            }
-        });
+        // Obtener estadísticas generales de asignaciones
+        const totalAssignments = await Assignment.countDocuments();
+        const completedAssignments = await Assignment.countDocuments({ status: 'completed' });
+        const pendingAssignments = await Assignment.countDocuments({ status: 'pending' });
         
-    } catch (error) {
-        console.error('Error enviando recordatorios:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Error al enviar recordatorios'
-        });
-    }
-};
-
-// Obtener estadísticas de entrega por fechas
-export const getSubmissionStatistics = async (req, res) => {
-    try {
-        const assignments = await Assignment.find()
-            .populate('assignedTo', 'name email')
-            .populate('responses.user', 'name email');
-
-        const statistics = {
-            onTime: 0,
-            late: 0,
-            notSubmitted: 0,
-            totalAssignments: 0
-        };
-
+        // Asignaciones vencidas (pending y fecha de vencimiento pasada)
         const now = new Date();
+        const overdueAssignments = await Assignment.countDocuments({
+            status: 'pending',
+            dueDate: { $lt: now }
+        });
 
-        assignments.forEach(assignment => {
-            assignment.assignedTo.forEach(user => {
-                statistics.totalAssignments++;
-                
-                const userResponse = assignment.responses.find(
-                    r => r.user && r.user._id.toString() === user._id.toString()
-                );
+        // Asignaciones por vencer en 24 horas
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const dueSoonAssignments = await Assignment.countDocuments({
+            status: 'pending',
+            dueDate: { $gte: now, $lte: tomorrow }
+        });
 
-                if (!userResponse) {
-                    // No hay respuesta
-                    if (now > assignment.closeDate) {
-                        statistics.notSubmitted++;
-                    }
-                } else {
-                    // Hay respuesta, verificar si fue a tiempo o tarde
-                    const submittedAt = new Date(userResponse.submittedAt);
-                    if (submittedAt <= assignment.dueDate) {
-                        statistics.onTime++;
-                    } else if (submittedAt <= assignment.closeDate) {
-                        statistics.late++;
+        // Estadísticas por profesor
+        const teacherStats = await Assignment.aggregate([
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'assignedTo',
+                    foreignField: '_id',
+                    as: 'teacher'
+                }
+            },
+            {
+                $unwind: '$teacher'
+            },
+            {
+                $group: {
+                    _id: '$assignedTo',
+                    teacherName: {
+                        $first: {
+                            $concat: ['$teacher.nombre', ' ', '$teacher.apellidoPaterno', ' ', '$teacher.apellidoMaterno']
+                        }
+                    },
+                    total: { $sum: 1 },
+                    completed: {
+                        $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+                    },
+                    pending: {
+                        $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+                    },
+                    overdue: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $and: [
+                                        { $eq: ['$status', 'pending'] },
+                                        { $lt: ['$dueDate', now] }
+                                    ]
+                                },
+                                1,
+                                0
+                            ]
+                        }
                     }
                 }
-            });
-        });
+            },
+            {
+                $addFields: {
+                    completionRate: {
+                        $cond: [
+                            { $eq: ['$total', 0] },
+                            0,
+                            { $multiply: [{ $divide: ['$completed', '$total'] }, 100] }
+                        ]
+                    }
+                }
+            },
+            {
+                $sort: { completionRate: -1 }
+            }
+        ]);
 
-        res.status(200).json({
+        res.json({
             success: true,
             data: {
-                statistics,
-                percentages: {
-                    onTime: ((statistics.onTime / statistics.totalAssignments) * 100).toFixed(2),
-                    late: ((statistics.late / statistics.totalAssignments) * 100).toFixed(2),
-                    notSubmitted: ((statistics.notSubmitted / statistics.totalAssignments) * 100).toFixed(2)
-                }
+                overview: {
+                    total: totalAssignments,
+                    completed: completedAssignments,
+                    pending: pendingAssignments,
+                    overdue: overdueAssignments,
+                    dueSoon: dueSoonAssignments,
+                    completionRate: totalAssignments > 0 ? ((completedAssignments / totalAssignments) * 100).toFixed(1) : 0
+                },
+                teacherStats
             }
         });
+
     } catch (error) {
-        console.error('Error al obtener estadísticas:', error);
+        console.error('Error obteniendo estadísticas para admin:', error);
         res.status(500).json({
             success: false,
             error: error.message || 'Error al obtener las estadísticas'
@@ -1100,36 +843,71 @@ export const getSubmissionStatistics = async (req, res) => {
     }
 };
 
-// Obtener estadísticas de todos los profesores
-export const getAllTeachersStats = async (req, res) => {
+// Marcar asignación como completada desde administrador
+export const markAssignmentCompletedByAdmin = async (req, res) => {
     try {
-        // Obtener todos los profesores
-        const teachers = await User.find({ role: 'docente' }).select('_id nombre apellidoPaterno apellidoMaterno email');
-        
-        // Asegurarse de que cada profesor tenga estadísticas actualizadas
-        for (const teacher of teachers) {
-            await TeacherStats.updateTeacherStats(teacher._id);
+        // Verificar que el usuario sea administrador
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                error: 'Solo los administradores pueden marcar asignaciones como completadas'
+            });
         }
 
-        // Obtener todas las estadísticas actualizadas
-        const stats = await TeacherStats.find()
-            .populate('teacher', 'nombre apellidoPaterno apellidoMaterno email');
+        const { assignmentId } = req.params;
 
-        res.status(200).json({
+        // Buscar la asignación
+        const assignment = await Assignment.findById(assignmentId)
+            .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email');
+
+        if (!assignment) {
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Verificar que la asignación no esté ya completada
+        if (assignment.status === 'completed') {
+            return res.status(400).json({
+                success: false,
+                error: 'Esta asignación ya está marcada como completada'
+            });
+        }
+
+        // Marcar como completada
+        assignment.status = 'completed';
+        assignment.completedAt = new Date();
+        assignment.completedBy = req.user._id;
+        assignment.adminCompleted = true; // Flag para indicar que fue completada por admin
+
+        await assignment.save();
+
+        // Enviar notificación al profesor
+        try {
+            await notificationService.sendNotification({
+                userId: assignment.assignedTo._id,
+                type: 'assignment_completed_by_admin',
+                title: 'Asignación marcada como completada',
+                message: `El administrador ha marcado la asignación "${assignment.title}" como completada.`,
+                relatedId: assignment._id,
+                relatedType: 'Assignment'
+            });
+        } catch (notifError) {
+            console.error('Error enviando notificación:', notifError);
+        }
+
+        res.json({
             success: true,
-            stats: stats.map(stat => ({
-                teacherId: stat.teacher._id,
-                teacherName: `${stat.teacher.nombre} ${stat.teacher.apellidoPaterno} ${stat.teacher.apellidoMaterno}`,
-                email: stat.teacher.email,
-                stats: stat.stats,
-                lastUpdated: stat.lastUpdated
-            }))
+            message: 'Asignación marcada como completada exitosamente',
+            data: assignment
         });
+
     } catch (error) {
-        console.error('Error al obtener estadísticas de profesores:', error);
+        console.error('Error marcando asignación como completada por admin:', error);
         res.status(500).json({
             success: false,
-            error: error.message || 'Error al obtener las estadísticas de los profesores'
+            error: error.message || 'Error al marcar la asignación como completada'
         });
     }
 };

@@ -14,11 +14,10 @@ import {
     getTeacherAssignmentStats,
     getTeacherFilteredAssignments,
     markAssignmentCompleted,
-    getPoorPerformanceReport,
-    getSubmissionStatistics,
-    sendPoorPerformanceReports,
-    sendAssignmentReminders,
-    getAllTeachersStats
+    // Nuevas funciones para administrador
+    getAdminAllAssignments,
+    getAdminAssignmentStats,
+    markAssignmentCompletedByAdmin
 } from '../controllers/assignmentController.js';
 
 // Rutas para administradores
@@ -29,12 +28,10 @@ router.post('/',
     createAssignment
 );
 
-// Reportes y estadísticas (solo para administradores)
-router.get('/reports/poor-performance', auth, getPoorPerformanceReport);
-router.get('/reports/submission-statistics', auth, getSubmissionStatistics);
-router.post('/reports/send-poor-performance', auth, sendPoorPerformanceReports);
-router.post('/reports/send-reminders', auth, sendAssignmentReminders);
-router.get('/teachers/stats', auth, getAllTeachersStats); // Nueva ruta para estadísticas de todos los profesores
+// Rutas específicas para administrador
+router.get('/admin/all', auth, getAdminAllAssignments);
+router.get('/admin/stats', auth, getAdminAssignmentStats);
+router.patch('/admin/:assignmentId/complete', auth, markAssignmentCompletedByAdmin);
 
 // Ruta temporal sin autenticación para pruebas
 router.post('/test', 
