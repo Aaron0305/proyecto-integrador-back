@@ -37,8 +37,51 @@ const assignmentSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'completed'],
+        enum: ['pending', 'completed', 'scheduled', 'active', 'cancelled', 'publication_error'],
         default: 'pending'
+    },
+    // Campos para asignaciones programadas
+    scheduledPublish: {
+        type: Boolean,
+        default: false
+    },
+    publishDate: {
+        type: Date
+    },
+    publishedAt: {
+        type: Date
+    },
+    priority: {
+        type: String,
+        enum: ['low', 'normal', 'high'],
+        default: 'normal'
+    },
+    reminderSettings: {
+        enabled: {
+            type: Boolean,
+            default: false
+        },
+        daysBeforeDue: {
+            type: Number,
+            default: 2
+        }
+    },
+    cancelledAt: {
+        type: Date
+    },
+    cancelledBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
+    updatedAt: {
+        type: Date
+    },
+    updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
+    publicationError: {
+        type: String
     },
     completedAt: {
         type: Date
@@ -86,4 +129,4 @@ const assignmentSchema = new mongoose.Schema({
     }]
 });
 
-export default mongoose.model('Assignment', assignmentSchema); 
+export default mongoose.model('Assignment', assignmentSchema);

@@ -18,7 +18,12 @@ import {
     getAdminAllAssignments,
     getAdminAssignmentStats,
     markAssignmentCompletedByAdmin,
-    updateAssignmentByAdmin
+    updateAssignmentByAdmin,
+    // Funciones para asignaciones programadas
+    scheduleAssignment,
+    getScheduledAssignments,
+    cancelScheduledAssignment,
+    updateScheduledAssignment
 } from '../controllers/assignmentController.js';
 
 // Rutas para administradores
@@ -34,6 +39,12 @@ router.get('/admin/all', auth, getAdminAllAssignments);
 router.get('/admin/stats', auth, getAdminAssignmentStats);
 router.patch('/admin/:assignmentId/complete', auth, markAssignmentCompletedByAdmin);
 router.put('/admin/:assignmentId', auth, updateAssignmentByAdmin);
+
+// Rutas para asignaciones programadas
+router.post('/admin/schedule', auth, scheduleAssignment);
+router.get('/admin/scheduled', auth, getScheduledAssignments);
+router.delete('/admin/scheduled/:id', auth, cancelScheduledAssignment);
+router.put('/admin/scheduled/:id', auth, updateScheduledAssignment);
 
 // Ruta temporal sin autenticación para pruebas
 router.post('/test', 

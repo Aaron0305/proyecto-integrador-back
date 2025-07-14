@@ -12,6 +12,7 @@ import semestresRoutes from './routes/semestres.js';
 import statsRoutes from './routes/statsRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import notificationService from './services/notificationService.js';
+import { startScheduledAssignmentsCron } from './services/scheduledAssignmentsService.js';
 
 dotenv.config();
 
@@ -56,6 +57,11 @@ const PORT = process.env.PORT || 3001;
 connectDB().then(() => {
     httpServer.listen(PORT, () => {
         console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+        
+        // Iniciar el servicio de asignaciones programadas
+        setTimeout(() => {
+            startScheduledAssignmentsCron();
+        }, 5000); // Esperar 5 segundos después de que el servidor esté listo
     });
 }).catch(err => {
     console.error('Error al conectar a la base de datos:', err);

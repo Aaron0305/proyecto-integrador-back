@@ -1067,3 +1067,464 @@ export const updateAssignmentByAdmin = async (req, res) => {
         });
     }
 };
+
+// ========== FUNCIONES PARA ASIGNACIONES PROGRAMADAS ==========
+
+// Programar una nueva asignación
+export const scheduleAssignment = async (req, res) => {
+    try {
+        console.log('📤 Iniciando programación de asignación...');
+        console.log('📋 Datos recibidos:', JSON.stringify(req.body, null, 2));
+        console.log('👤 Usuario autenticado:', req.user ? { id: req.user._id, email: req.user.email } : 'No autenticado');
+
+        const { 
+            title, 
+            description, 
+            dueDate, 
+            closeDate, 
+            publishDate,
+            assignedTo,
+            assignToAll,
+            priority,
+            reminderEnabled,
+            reminderDays
+        } = req.body;
+
+        // Validar que el usuario esté autenticado
+        if (!req.user || !req.user._id) {
+            console.error('❌ Usuario no autenticado');
+            return res.status(401).json({
+                success: false,
+                error: 'Usuario no autenticado'
+            });
+        }
+
+        // Validar datos requeridos
+        if (!title || !description || !publishDate || !dueDate || !closeDate) {
+            console.error('❌ Datos faltantes:', { 
+                title: !!title, 
+                description: !!description, 
+                publishDate: !!publishDate, 
+                dueDate: !!dueDate, 
+                closeDate: !!closeDate 
+            });
+            return res.status(400).json({
+                success: false,
+                error: 'Todos los campos son requeridos: título, descripción, fecha de publicación, fecha de vencimiento y fecha de cierre'
+            });
+        }
+
+        // Validar fechas
+        const publishDateObj = new Date(publishDate);
+        const dueDateObj = new Date(dueDate);
+        const closeDateObj = new Date(closeDate);
+        const now = new Date();
+
+        console.log('📅 Validando fechas:', {
+            now: now.toISOString(),
+            publishDate: publishDateObj.toISOString(),
+            dueDate: dueDateObj.toISOString(),
+            closeDate: closeDateObj.toISOString()
+        });
+
+        if (isNaN(publishDateObj.getTime()) || isNaN(dueDateObj.getTime()) || isNaN(closeDateObj.getTime())) {
+            console.error('❌ Fechas inválidas');
+            return res.status(400).json({
+                success: false,
+                error: 'Las fechas proporcionadas no son válidas'
+            });
+        }
+
+        if (publishDateObj <= now) {
+            console.error('❌ Fecha de publicación en el pasado');
+            return res.status(400).json({
+                success: false,
+                error: 'La fecha de publicación debe ser en el futuro'
+            });
+        }
+
+        if (dueDateObj <= publishDateObj) {
+            console.error('❌ Fecha de entrega incorrecta');
+            return res.status(400).json({
+                success: false,
+                error: 'La fecha de vencimiento debe ser posterior a la fecha de publicación'
+            });
+        }
+
+        if (closeDateObj <= dueDateObj) {
+            console.error('❌ Fecha de cierre incorrecta');
+            return res.status(400).json({
+                success: false,
+                error: 'La fecha de cierre debe ser posterior o igual a la fecha de vencimiento'
+            });
+        }
+
+        // Validar docentes asignados si no es para todos
+        if (!assignToAll && (!assignedTo || assignedTo.length === 0)) {
+            console.error('❌ No hay docentes asignados');
+            return res.status(400).json({
+                success: false,
+                error: 'Debe seleccionar al menos un docente o marcar como asignación general'
+            });
+        }
+
+        console.log('✅ Validaciones pasadas, creando asignación...');
+
+        // Crear la asignación programada
+        const assignmentData = {
+            title: title.trim(),
+            description: description.trim(),
+            publishDate: publishDateObj,
+            dueDate: dueDateObj,
+            closeDate: closeDateObj,
+            assignedTo: assignToAll ? [] : (assignedTo || []),
+            isGeneral: assignToAll || false,
+            status: 'scheduled',
+            priority: priority || 'normal',
+            reminderSettings: {
+                enabled: reminderEnabled || false,
+                daysBeforeDue: reminderDays || 2
+            },
+            scheduledPublish: true,
+            createdBy: req.user._id
+        };
+
+        console.log('📝 Datos de asignación a crear:', JSON.stringify(assignmentData, null, 2));
+
+        const scheduledAssignment = new Assignment(assignmentData);
+        
+        console.log('💾 Guardando en base de datos...');
+        await scheduledAssignment.save();
+        
+        console.log('✅ Asignación programada creada exitosamente:', scheduledAssignment._id);
+
+        res.status(201).json({
+            success: true,
+            message: 'Asignación programada exitosamente',
+            data: {
+                assignment: scheduledAssignment
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error programando asignación:', error);
+        console.error('❌ Stack trace:', error.stack);
+        
+        // Determinar el tipo de error y respuesta adecuada
+        let errorMessage = 'Error interno del servidor';
+        let statusCode = 500;
+        
+        if (error.name === 'ValidationError') {
+            errorMessage = 'Error de validación de datos: ' + error.message;
+            statusCode = 400;
+        } else if (error.name === 'MongoError' && error.code === 11000) {
+            errorMessage = 'Ya existe una asignación con esos datos';
+            statusCode = 409;
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+        
+        res.status(statusCode).json({
+            success: false,
+            error: errorMessage
+        });
+    }
+};
+
+// Obtener asignaciones programadas
+export const getScheduledAssignments = async (req, res) => {
+    try {
+        const { 
+            status = 'all', 
+            search = '', 
+            sort = '-publishDate', 
+            page = 1, 
+            limit = 10 
+        } = req.query;
+
+        // Construir filtros
+        const filters = { scheduledPublish: true };
+
+        if (status !== 'all') {
+            filters.status = status;
+        }
+
+        if (search) {
+            filters.$or = [
+                { title: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        // Calcular paginación
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Obtener asignaciones
+        const assignments = await Assignment.find(filters)
+            .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email')
+            .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno email')
+            .sort(sort)
+            .skip(skip)
+            .limit(limitNum);
+
+        // Obtener conteo total
+        const total = await Assignment.countDocuments(filters);
+        const pages = Math.ceil(total / limitNum);
+
+        res.json({
+            success: true,
+            data: {
+                assignments,
+                pagination: {
+                    page: pageNum,
+                    pages,
+                    total,
+                    limit: limitNum
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Error obteniendo asignaciones programadas:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
+    }
+};
+
+// Cancelar una asignación programada
+export const cancelScheduledAssignment = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Buscar la asignación
+        const assignment = await Assignment.findById(id);
+        
+        if (!assignment) {
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Verificar que sea una asignación programada
+        if (!assignment.scheduledPublish) {
+            return res.status(400).json({
+                success: false,
+                error: 'Esta asignación no es una asignación programada'
+            });
+        }
+
+        // Verificar que esté en estado programado
+        if (assignment.status !== 'scheduled') {
+            return res.status(400).json({
+                success: false,
+                error: 'Solo se pueden cancelar asignaciones en estado programado'
+            });
+        }
+
+        // Actualizar estado a cancelado
+        assignment.status = 'cancelled';
+        assignment.cancelledAt = new Date();
+        assignment.cancelledBy = req.user.userId;
+        
+        await assignment.save();
+
+        res.json({
+            success: true,
+            message: 'Asignación programada cancelada exitosamente',
+            data: {
+                assignment
+            }
+        });
+
+    } catch (error) {
+        console.error('Error cancelando asignación programada:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
+    }
+};
+
+// Actualizar una asignación programada
+export const updateScheduledAssignment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const updateData = req.body;
+
+        // Buscar la asignación
+        const assignment = await Assignment.findById(id);
+        
+        if (!assignment) {
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Verificar que sea una asignación programada
+        if (!assignment.scheduledPublish) {
+            return res.status(400).json({
+                success: false,
+                error: 'Esta asignación no es una asignación programada'
+            });
+        }
+
+        // Verificar que esté en estado programado
+        if (assignment.status !== 'scheduled') {
+            return res.status(400).json({
+                success: false,
+                error: 'Solo se pueden editar asignaciones en estado programado'
+            });
+        }
+
+        // Validar fechas si se están actualizando
+        if (updateData.publishDate || updateData.dueDate || updateData.closeDate) {
+            const publishDate = new Date(updateData.publishDate || assignment.publishDate);
+            const dueDate = new Date(updateData.dueDate || assignment.dueDate);
+            const closeDate = new Date(updateData.closeDate || assignment.closeDate);
+            const now = new Date();
+
+            if (publishDate <= now) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'La fecha de publicación debe ser en el futuro'
+                });
+            }
+
+            if (dueDate <= publishDate) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'La fecha de vencimiento debe ser posterior a la fecha de publicación'
+                });
+            }
+
+            if (closeDate <= dueDate) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'La fecha de cierre debe ser posterior o igual a la fecha de vencimiento'
+                });
+            }
+        }
+
+        // Actualizar campos permitidos
+        const allowedFields = [
+            'title', 'description', 'publishDate', 'dueDate', 'closeDate',
+            'assignedTo', 'isGeneral', 'priority', 'reminderSettings'
+        ];
+
+        allowedFields.forEach(field => {
+            if (updateData[field] !== undefined) {
+                assignment[field] = updateData[field];
+            }
+        });
+
+        assignment.updatedAt = new Date();
+        assignment.updatedBy = req.user.userId;
+
+        await assignment.save();
+
+        // Poblar campos para la respuesta
+        await assignment.populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email');
+
+        res.json({
+            success: true,
+            message: 'Asignación programada actualizada exitosamente',
+            data: {
+                assignment
+            }
+        });
+
+    } catch (error) {
+        console.error('Error actualizando asignación programada:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
+    }
+};
+
+// Función para publicar asignaciones programadas (llamada por cron job)
+export const publishScheduledAssignments = async () => {
+    try {
+        const now = new Date();
+        
+        // Buscar asignaciones que deben ser publicadas
+        const assignmentsToPublish = await Assignment.find({
+            scheduledPublish: true,
+            status: 'scheduled',
+            publishDate: { $lte: now }
+        }).populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email');
+
+        console.log(`📅 Verificando asignaciones programadas... Encontradas: ${assignmentsToPublish.length}`);
+
+        for (const assignment of assignmentsToPublish) {
+            try {
+                // Cambiar estado a publicado
+                assignment.status = 'active';
+                assignment.publishedAt = now;
+                await assignment.save();
+
+                // Si es asignación general, asignar a todos los docentes
+                if (assignment.isGeneral) {
+                    const allTeachers = await User.find({ role: 'teacher' });
+                    assignment.assignedTo = allTeachers.map(teacher => teacher._id);
+                    await assignment.save();
+                }
+
+                // Enviar notificaciones
+                if (assignment.assignedTo && assignment.assignedTo.length > 0) {
+                    for (const teacher of assignment.assignedTo) {
+                        try {
+                            // Enviar email
+                            await emailService.sendAssignmentNotification(teacher.email, {
+                                teacherName: `${teacher.nombre} ${teacher.apellidoPaterno}`,
+                                assignmentTitle: assignment.title,
+                                assignmentDescription: assignment.description,
+                                dueDate: assignment.dueDate.toLocaleDateString('es-ES'),
+                                closeDate: assignment.closeDate.toLocaleDateString('es-ES')
+                            });
+
+                            // Enviar notificación web
+                            await notificationService.sendNotification(teacher._id, {
+                                type: 'new_assignment',
+                                title: '📝 Nueva Asignación Disponible',
+                                message: `Se ha publicado una nueva asignación: "${assignment.title}"`,
+                                assignmentId: assignment._id
+                            });
+
+                        } catch (notificationError) {
+                            console.error(`Error enviando notificación a ${teacher.email}:`, notificationError);
+                        }
+                    }
+                }
+
+                console.log(`✅ Asignación publicada: "${assignment.title}"`);
+
+            } catch (error) {
+                console.error(`❌ Error publicando asignación ${assignment._id}:`, error);
+                
+                // Marcar como error de publicación
+                assignment.status = 'publication_error';
+                assignment.publicationError = error.message;
+                await assignment.save();
+            }
+        }
+
+        return {
+            success: true,
+            publishedCount: assignmentsToPublish.length
+        };
+
+    } catch (error) {
+        console.error('❌ Error en proceso de publicación automática:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+};
