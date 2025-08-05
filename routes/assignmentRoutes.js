@@ -19,11 +19,13 @@ import {
     getAdminAssignmentStats,
     markAssignmentCompletedByAdmin,
     updateAssignmentByAdmin,
+    updateTeacherAssignmentStatus,
     // Funciones para asignaciones programadas
     scheduleAssignment,
     getScheduledAssignments,
     cancelScheduledAssignment,
-    updateScheduledAssignment
+    updateScheduledAssignment,
+    publishScheduledAssignments
 } from '../controllers/assignmentController.js';
 
 // Rutas para administradores
@@ -39,12 +41,21 @@ router.get('/admin/all', auth, getAdminAllAssignments);
 router.get('/admin/stats', auth, getAdminAssignmentStats);
 router.patch('/admin/:assignmentId/complete', auth, markAssignmentCompletedByAdmin);
 router.put('/admin/:assignmentId', auth, updateAssignmentByAdmin);
+router.patch('/admin/:assignmentId/teacher-status', auth, updateTeacherAssignmentStatus);
 
 // Rutas para asignaciones programadas
 router.post('/admin/schedule', auth, scheduleAssignment);
 router.get('/admin/scheduled', auth, getScheduledAssignments);
 router.delete('/admin/scheduled/:id', auth, cancelScheduledAssignment);
 router.put('/admin/scheduled/:id', auth, updateScheduledAssignment);
+router.post('/admin/publish-scheduled', auth, async (req, res) => {
+    try {
+        await publishScheduledAssignments();
+        res.json({ success: true, message: 'Asignaciones programadas procesadas' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 // Ruta temporal sin autenticación para pruebas
 router.post('/test', 

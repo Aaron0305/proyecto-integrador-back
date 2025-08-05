@@ -478,20 +478,30 @@ export const getTeacherFilteredAssignments = async (req, res) => {
         const query = { assignedTo: req.user._id };
         const now = new Date();
 
+        console.log('🔍 Obteniendo asignaciones para docente:', req.user.email);
+        console.log('📋 Filtros recibidos:', { status, search, sort });
+
         // Aplicar filtro de estado
         if (status && status !== 'all') {
             if (status === 'vencido') {
-                // Para vencidas: mostrar solo las que están pendientes y pasaron su fecha de vencimiento
-                query.status = 'pending';
-                query.dueDate = { $lt: now };
+                // Para vencidas: mostrar asignaciones activas o pendientes que pasaron su fecha de vencimiento
+                query.$or = [
+                    { status: 'pending', dueDate: { $lt: now } },
+                    { status: 'active', dueDate: { $lt: now } }
+                ];
             } else if (status === 'pending') {
-                // Para pendientes: mostrar solo las que están pendientes y NO han pasado su fecha de vencimiento
-                query.status = 'pending';
-                query.dueDate = { $gt: now };
+                // Para pendientes: mostrar asignaciones activas o pendientes que NO han pasado su fecha de vencimiento
+                query.$or = [
+                    { status: 'pending', dueDate: { $gt: now } },
+                    { status: 'active', dueDate: { $gt: now } }
+                ];
             } else if (status === 'completed') {
                 // Para completadas: mostrar solo las completadas sin importar la fecha
                 query.status = 'completed';
             }
+        } else {
+            // Si no hay filtro específico, mostrar todas las asignaciones relevantes para el docente
+            query.status = { $in: ['pending', 'active', 'completed'] };
         }
 
         // Aplicar búsqueda si existe
@@ -502,19 +512,64 @@ export const getTeacherFilteredAssignments = async (req, res) => {
             ];
         }
 
-        console.log('Query de filtrado:', query); // Para debug
+        console.log('🔎 Query construida:', JSON.stringify(query, null, 2));
 
         const assignments = await Assignment.find(query)
             .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno role')
+            .populate('responses.user', 'nombre apellidoPaterno apellidoMaterno email')
             .sort(sort)
             .skip((parseInt(page) - 1) * parseInt(limit))
             .limit(parseInt(limit));
 
         const total = await Assignment.countDocuments(query);
 
+        console.log(`📊 Asignaciones encontradas: ${assignments.length} de ${total} total`);
+
+        // Procesar las asignaciones para incluir el estado específico del docente actual
+        const processedAssignments = assignments.map(assignment => {
+            const assignmentObj = assignment.toObject();
+            
+            // Buscar la respuesta específica del docente actual
+            const teacherResponse = assignment.responses.find(
+                response => response.user._id.toString() === req.user._id.toString()
+            );
+            
+            if (teacherResponse) {
+                // Si existe una respuesta, incluir la información del estado actualizado por el admin
+                assignmentObj.teacherStatus = {
+                    submissionStatus: teacherResponse.submissionStatus,
+                    status: teacherResponse.status,
+                    submittedAt: teacherResponse.submittedAt,
+                    adminUpdated: true
+                };
+                
+                console.log(`✅ "${assignment.title}" - Estado específico del docente:`, {
+                    status: teacherResponse.status,
+                    submissionStatus: teacherResponse.submissionStatus
+                });
+            } else {
+                // Si no existe respuesta, usar el estado base de la asignación
+                assignmentObj.teacherStatus = {
+                    submissionStatus: null,
+                    status: assignment.status === 'active' ? 'pending' : assignment.status,
+                    submittedAt: null,
+                    adminUpdated: false
+                };
+                
+                console.log(`📋 "${assignment.title}" - Estado base (sin respuesta):`, {
+                    statusOriginal: assignment.status,
+                    statusParaDocente: assignment.status === 'active' ? 'pending' : assignment.status
+                });
+            }
+            
+            return assignmentObj;
+        });
+
+        console.log(`📤 Enviando ${processedAssignments.length} asignaciones al docente ${req.user.email}`);
+
         res.status(200).json({
             success: true,
-            assignments,
+            assignments: processedAssignments,
             pagination: {
                 currentPage: parseInt(page),
                 totalPages: Math.ceil(total / parseInt(limit)),
@@ -1135,12 +1190,9 @@ export const scheduleAssignment = async (req, res) => {
             });
         }
 
-        if (publishDateObj <= now) {
-            console.error('❌ Fecha de publicación en el pasado');
-            return res.status(400).json({
-                success: false,
-                error: 'La fecha de publicación debe ser en el futuro'
-            });
+        if (publishDateObj < now) {
+            console.log('⚠️ Fecha de publicación en el pasado, ajustando a ahora');
+            publishDateObj.setTime(now.getTime() + 1000); // 1 segundo en el futuro
         }
 
         if (dueDateObj <= publishDateObj) {
@@ -1194,15 +1246,26 @@ export const scheduleAssignment = async (req, res) => {
         const scheduledAssignment = new Assignment(assignmentData);
         
         console.log('💾 Guardando en base de datos...');
-        await scheduledAssignment.save();
+        console.log('📋 Documento a guardar:', JSON.stringify(scheduledAssignment.toObject(), null, 2));
         
-        console.log('✅ Asignación programada creada exitosamente:', scheduledAssignment._id);
+        const savedAssignment = await scheduledAssignment.save();
+        
+        console.log('✅ Asignación programada creada exitosamente:', savedAssignment._id);
+        console.log('🔍 Verificando que se guardó correctamente...');
+        
+        // Verificar que se guardó correctamente
+        const verifyAssignment = await Assignment.findById(savedAssignment._id);
+        if (verifyAssignment) {
+            console.log('✅ Verificación exitosa: La asignación se guardó en la BD');
+        } else {
+            console.error('❌ ERROR: La asignación NO se guardó en la BD');
+        }
 
         res.status(201).json({
             success: true,
             message: 'Asignación programada exitosamente',
             data: {
-                assignment: scheduledAssignment
+                assignment: savedAssignment
             }
         });
 
@@ -1234,6 +1297,9 @@ export const scheduleAssignment = async (req, res) => {
 // Obtener asignaciones programadas
 export const getScheduledAssignments = async (req, res) => {
     try {
+        console.log('🔍 Obteniendo asignaciones programadas...');
+        console.log('📋 Query params:', req.query);
+        
         const { 
             status = 'all', 
             search = '', 
@@ -1244,6 +1310,7 @@ export const getScheduledAssignments = async (req, res) => {
 
         // Construir filtros
         const filters = { scheduledPublish: true };
+        console.log('🔎 Filtros base:', filters);
 
         if (status !== 'all') {
             filters.status = status;
@@ -1256,10 +1323,16 @@ export const getScheduledAssignments = async (req, res) => {
             ];
         }
 
+        console.log('🔎 Filtros finales:', JSON.stringify(filters, null, 2));
+
         // Calcular paginación
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
         const skip = (pageNum - 1) * limitNum;
+
+        // Primero, contar cuántos documentos existen con scheduledPublish: true
+        const totalScheduledAssignments = await Assignment.countDocuments({ scheduledPublish: true });
+        console.log('📊 Total de asignaciones con scheduledPublish=true:', totalScheduledAssignments);
 
         // Obtener asignaciones
         const assignments = await Assignment.find(filters)
@@ -1269,9 +1342,27 @@ export const getScheduledAssignments = async (req, res) => {
             .skip(skip)
             .limit(limitNum);
 
+        console.log('📋 Asignaciones encontradas:', assignments.length);
+        if (assignments.length > 0) {
+            console.log('📝 Primeras asignaciones:', assignments.slice(0, 3).map(a => ({
+                id: a._id,
+                title: a.title,
+                status: a.status,
+                scheduledPublish: a.scheduledPublish,
+                publishDate: a.publishDate
+            })));
+        }
+
         // Obtener conteo total
         const total = await Assignment.countDocuments(filters);
         const pages = Math.ceil(total / limitNum);
+
+        console.log('📊 Resultados finales:', {
+            total,
+            pages,
+            currentPage: pageNum,
+            assignmentsReturned: assignments.length
+        });
 
         res.json({
             success: true,
@@ -1464,6 +1555,9 @@ export const publishScheduledAssignments = async () => {
 
         for (const assignment of assignmentsToPublish) {
             try {
+                console.log(`📝 Procesando asignación: "${assignment.title}"`);
+                console.log(`👥 Docentes asignados (antes de populate): ${assignment.assignedTo?.length || 0}`);
+                
                 // Cambiar estado a publicado
                 assignment.status = 'active';
                 assignment.publishedAt = now;
@@ -1471,9 +1565,21 @@ export const publishScheduledAssignments = async () => {
 
                 // Si es asignación general, asignar a todos los docentes
                 if (assignment.isGeneral) {
-                    const allTeachers = await User.find({ role: 'teacher' });
+                    const allTeachers = await User.find({ role: 'docente' });
                     assignment.assignedTo = allTeachers.map(teacher => teacher._id);
                     await assignment.save();
+                }
+
+                // POPULATOR DE NUEVO para obtener datos completos de docentes
+                await assignment.populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email');
+                
+                console.log(`👥 Docentes después de populate: ${assignment.assignedTo?.length || 0}`);
+                
+                // Debug de docentes
+                if (assignment.assignedTo && assignment.assignedTo.length > 0) {
+                    assignment.assignedTo.forEach((teacher, index) => {
+                        console.log(`   Docente ${index + 1}: ${teacher.nombre} ${teacher.apellidoPaterno} - ${teacher.email}`);
+                    });
                 }
 
                 // Enviar notificaciones
@@ -1481,16 +1587,18 @@ export const publishScheduledAssignments = async () => {
                     for (const teacher of assignment.assignedTo) {
                         try {
                             // Enviar email
-                            await emailService.sendAssignmentNotification(teacher.email, {
+                            await emailService.sendNewAssignmentNotification({
+                                to: teacher.email,
                                 teacherName: `${teacher.nombre} ${teacher.apellidoPaterno}`,
-                                assignmentTitle: assignment.title,
-                                assignmentDescription: assignment.description,
+                                title: assignment.title,
+                                description: assignment.description,
                                 dueDate: assignment.dueDate.toLocaleDateString('es-ES'),
-                                closeDate: assignment.closeDate.toLocaleDateString('es-ES')
+                                closeDate: assignment.closeDate.toLocaleDateString('es-ES'),
+                                assignmentUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/assignment/${assignment._id}`
                             });
 
                             // Enviar notificación web
-                            await notificationService.sendNotification(teacher._id, {
+                            await notificationService.sendNotification([teacher._id], {
                                 type: 'new_assignment',
                                 title: '📝 Nueva Asignación Disponible',
                                 message: `Se ha publicado una nueva asignación: "${assignment.title}"`,
@@ -1526,5 +1634,139 @@ export const publishScheduledAssignments = async () => {
             success: false,
             error: error.message
         };
+    }
+};
+
+// Actualizar estado de asignación para un docente específico
+export const updateTeacherAssignmentStatus = async (req, res) => {
+    try {
+        const { assignmentId } = req.params;
+        const { teacherId, status } = req.body;
+        
+        console.log('📝 Admin actualizando estado de docente:', {
+            assignmentId,
+            teacherId,
+            status,
+            adminId: req.user._id
+        });
+
+        // Verificar que el usuario sea administrador
+        if (!req.user || req.user.role !== 'admin') {
+            console.log('❌ Usuario no autorizado:', req.user?.role);
+            return res.status(403).json({
+                success: false,
+                error: 'Solo los administradores pueden actualizar estados de docentes'
+            });
+        }
+
+        // Validar datos de entrada
+        if (!teacherId || !status) {
+            return res.status(400).json({
+                success: false,
+                error: 'teacherId y status son requeridos'
+            });
+        }
+
+        // Validar el estado proporcionado
+        const validStatuses = ['entregado', 'entregado_tarde', 'no_entregado', 'pendiente'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Estado inválido. Estados permitidos: ' + validStatuses.join(', ')
+            });
+        }
+
+        // Buscar la asignación
+        const assignment = await Assignment.findById(assignmentId)
+            .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email');
+            
+        if (!assignment) {
+            console.log('❌ Asignación no encontrada:', assignmentId);
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Verificar que el docente esté asignado a esta asignación
+        const isTeacherAssigned = assignment.assignedTo.some(
+            teacher => teacher._id.toString() === teacherId
+        );
+        
+        if (!isTeacherAssigned) {
+            return res.status(400).json({
+                success: false,
+                error: 'El docente no está asignado a esta asignación'
+            });
+        }
+
+        // Buscar si ya existe una respuesta del docente
+        let teacherResponse = assignment.responses.find(
+            response => response.user.toString() === teacherId
+        );
+
+        const now = new Date();
+        let submissionStatus = 'on-time';
+        
+        // Determinar el estado de entrega basado en las fechas
+        if (status === 'entregado' || status === 'entregado_tarde') {
+            if (now > new Date(assignment.dueDate)) {
+                submissionStatus = 'late';
+            }
+            if (now > new Date(assignment.closeDate)) {
+                submissionStatus = 'closed';
+            }
+        }
+
+        if (teacherResponse) {
+            // Actualizar respuesta existente
+            if (status === 'entregado' || status === 'entregado_tarde') {
+                teacherResponse.submissionStatus = submissionStatus;
+                teacherResponse.status = 'submitted';
+                teacherResponse.submittedAt = now;
+            } else {
+                // Para 'no_entregado' o 'pendiente'
+                teacherResponse.submissionStatus = null;
+                teacherResponse.status = 'reviewed';
+                teacherResponse.submittedAt = null;
+            }
+        } else {
+            // Crear nueva respuesta
+            assignment.responses.push({
+                user: teacherId,
+                files: [],
+                submittedAt: status === 'entregado' || status === 'entregado_tarde' ? now : null,
+                submissionStatus: status === 'entregado' || status === 'entregado_tarde' ? submissionStatus : null,
+                status: status === 'entregado' || status === 'entregado_tarde' ? 'submitted' : 'reviewed'
+            });
+        }
+
+        // Actualizar timestamp de modificación
+        assignment.updatedAt = now;
+        assignment.updatedBy = req.user._id;
+
+        await assignment.save();
+
+        // Poblar la asignación actualizada para la respuesta
+        await assignment.populate([
+            { path: 'assignedTo', select: 'nombre apellidoPaterno apellidoMaterno email' },
+            { path: 'createdBy', select: 'nombre apellidoPaterno apellidoMaterno email' },
+            { path: 'responses.user', select: 'nombre apellidoPaterno apellidoMaterno email' }
+        ]);
+
+        console.log('✅ Estado de docente actualizado exitosamente');
+
+        res.json({
+            success: true,
+            message: 'Estado del docente actualizado exitosamente',
+            assignment: assignment
+        });
+
+    } catch (error) {
+        console.error('❌ Error actualizando estado del docente:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
     }
 };
