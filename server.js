@@ -57,6 +57,7 @@ const PORT = process.env.PORT || 3001;
 connectDB().then(() => {
     httpServer.listen(PORT, () => {
         console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+        console.log('Límite de archivos actualizado a 50MB'); // Cambio para forzar reinicio
         
         // Iniciar el servicio de asignaciones programadas
         setTimeout(() => {

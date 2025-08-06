@@ -33,6 +33,8 @@ const fileFilter = (req, file, cb) => {
         'application/pdf',
         'application/msword',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation', // Para archivos .pptx
+        'application/vnd.ms-powerpoint', // Para archivos .ppt
         'image/jpeg',
         'image/png',
         'image/jpg',
@@ -46,16 +48,16 @@ const fileFilter = (req, file, cb) => {
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
-        cb(new Error('Tipo de archivo no permitido. Solo se permiten PDF, DOC, DOCX, JPG, PNG, TXT, ASM y Excel.'), false);
+        cb(new Error('Tipo de archivo no permitido. Solo se permiten PDF, DOC, DOCX, PPT, PPTX, JPG, PNG, TXT, ASM y Excel.'), false);
     }
 };
 
-// Configuración de multer
+// Configuración de multer - Límite aumentado a 50MB
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 15 * 1024 * 1024, // 15MB máximo
+        fileSize: 50 * 1024 * 1024, // 50MB máximo (aumentado de 15MB)
         files: 5 // máximo 5 archivos
     }
 });
@@ -66,7 +68,7 @@ const handleMulterError = (err, req, res, next) => {
         if (err.code === 'LIMIT_FILE_SIZE') {
             return res.status(400).json({
                 success: false,
-                error: 'El archivo es demasiado grande. El tamaño máximo permitido es 15MB.'
+                error: 'El archivo es demasiado grande. El tamaño máximo permitido es 50MB.'
             });
         }
         if (err.code === 'LIMIT_FILE_COUNT') {

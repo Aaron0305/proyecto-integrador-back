@@ -88,30 +88,6 @@ router.get('/teacher/stats', auth, getTeacherAssignmentStats);
 router.get('/teacher/assignments', auth, getTeacherFilteredAssignments);
 router.patch('/teacher/:id/complete', auth, markAssignmentCompleted);
 
-router.get('/:id', auth, getAssignmentById);
-router.post('/:id/submit', 
-    auth, 
-    upload.array('files', 5),
-    handleMulterError,
-    submitAssignmentResponse
-);
-
-// Endpoint de debug para verificar headers
-router.post('/debug-headers', (req, res) => {
-    console.log('🔍 === DEBUG HEADERS ===');
-    console.log('Headers:', req.headers);
-    console.log('Authorization:', req.headers.authorization);
-    console.log('Body:', req.body);
-    
-    res.json({
-        success: true,
-        message: 'Headers recibidos',
-        headers: req.headers,
-        hasAuth: !!req.headers.authorization,
-        authHeader: req.headers.authorization
-    });
-});
-
 // Endpoint para verificar el estado de autenticación desde frontend
 router.get('/auth-status', (req, res) => {
     console.log('🔍 === AUTH STATUS CHECK ===');
@@ -146,6 +122,30 @@ router.get('/auth-status', (req, res) => {
         message: 'Token presente y con formato correcto',
         hasAuth: true,
         tokenLength: token ? token.length : 0
+    });
+});
+
+router.get('/:id', auth, getAssignmentById);
+router.post('/:id/submit', 
+    auth, 
+    upload.array('files', 5),
+    handleMulterError,
+    submitAssignmentResponse
+);
+
+// Endpoint de debug para verificar headers
+router.post('/debug-headers', (req, res) => {
+    console.log('🔍 === DEBUG HEADERS ===');
+    console.log('Headers:', req.headers);
+    console.log('Authorization:', req.headers.authorization);
+    console.log('Body:', req.body);
+    
+    res.json({
+        success: true,
+        message: 'Headers recibidos',
+        headers: req.headers,
+        hasAuth: !!req.headers.authorization,
+        authHeader: req.headers.authorization
     });
 });
 
