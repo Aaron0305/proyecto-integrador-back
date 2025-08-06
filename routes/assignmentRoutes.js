@@ -25,7 +25,10 @@ import {
     getScheduledAssignments,
     cancelScheduledAssignment,
     updateScheduledAssignment,
-    publishScheduledAssignments
+    publishScheduledAssignments,
+    // Nuevas funciones para gestión de estados de docentes
+    getTeachersStatusForAssignment,
+    updateTeacherStatusInAssignment
 } from '../controllers/assignmentController.js';
 
 // Rutas para administradores
@@ -145,5 +148,9 @@ router.get('/auth-status', (req, res) => {
         tokenLength: token ? token.length : 0
     });
 });
+
+// Nuevas rutas para gestión de estados de docentes
+router.get('/:assignmentId/teachers-status', auth, getTeachersStatusForAssignment);
+router.patch('/:assignmentId/teacher-status', auth, updateTeacherStatusInAssignment);
 
 export default router;

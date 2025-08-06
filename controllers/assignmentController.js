@@ -1770,3 +1770,186 @@ export const updateTeacherAssignmentStatus = async (req, res) => {
         });
     }
 };
+
+// Obtener estados de docentes para una asignación específica
+export const getTeachersStatusForAssignment = async (req, res) => {
+    try {
+        const { assignmentId } = req.params;
+
+        console.log('📋 Obteniendo estados de docentes para asignación:', assignmentId);
+
+        const assignment = await Assignment.findById(assignmentId)
+            .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email')
+            .populate('responses.user', 'nombre apellidoPaterno apellidoMaterno email');
+
+        if (!assignment) {
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Construir lista de docentes con sus estados usando los valores correctos del enum
+        const teachersStatus = assignment.assignedTo.map(teacher => {
+            const response = assignment.responses.find(r => 
+                r.user._id.toString() === teacher._id.toString()
+            );
+
+            let status = 'pending';
+            if (response && response.submissionStatus) {
+                if (response.submissionStatus === 'on-time' && response.status === 'submitted') {
+                    status = 'completed';
+                } else if (response.submissionStatus === 'late') {
+                    status = 'completed-late';
+                } else if (response.submissionStatus === 'closed') {
+                    status = 'not-delivered';
+                }
+            }
+
+            return {
+                _id: teacher._id,
+                teacherId: teacher._id,
+                nombre: teacher.nombre,
+                apellidoPaterno: teacher.apellidoPaterno,
+                apellidoMaterno: teacher.apellidoMaterno,
+                email: teacher.email,
+                status: status,
+                submittedAt: response?.submittedAt || null
+            };
+        });
+
+        res.json({
+            success: true,
+            teachersStatus: teachersStatus,
+            assignment: {
+                _id: assignment._id,
+                title: assignment.title,
+                description: assignment.description
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error obteniendo estados de docentes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
+    }
+};
+
+// Actualizar estado de un docente específico en una asignación
+export const updateTeacherStatusInAssignment = async (req, res) => {
+    try {
+        const { assignmentId } = req.params;
+        const { teacherId, status } = req.body;
+
+        console.log('🔄 Actualizando estado de docente:', { assignmentId, teacherId, status });
+
+        // Validar estado
+        const validStatuses = ['completed', 'completed-late', 'not-delivered', 'pending'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Estado no válido'
+            });
+        }
+
+        const assignment = await Assignment.findById(assignmentId);
+        if (!assignment) {
+            return res.status(404).json({
+                success: false,
+                error: 'Asignación no encontrada'
+            });
+        }
+
+        // Verificar que el docente está asignado a esta asignación
+        const isAssigned = assignment.assignedTo.some(id => id.toString() === teacherId);
+        if (!isAssigned) {
+            return res.status(400).json({
+                success: false,
+                error: 'El docente no está asignado a esta asignación'
+            });
+        }
+
+        const now = new Date();
+        
+        // Mapear estados del frontend al backend usando los valores correctos del enum
+        let submissionStatus = 'on-time'; // Valor por defecto válido
+        let responseStatus = 'submitted';
+        let submittedAt = null;
+
+        switch (status) {
+            case 'completed':
+                submissionStatus = 'on-time';  // Usar valor válido del enum
+                responseStatus = 'submitted';
+                submittedAt = now;
+                break;
+            case 'completed-late':
+                submissionStatus = 'late';     // Usar valor válido del enum
+                responseStatus = 'submitted';
+                submittedAt = now;
+                break;
+            case 'not-delivered':
+                submissionStatus = 'closed';   // Usar valor válido del enum
+                responseStatus = 'reviewed';
+                submittedAt = null;
+                break;
+            case 'pending':
+                submissionStatus = 'on-time';  // Usar valor válido en lugar de null
+                responseStatus = 'submitted';
+                submittedAt = null;
+                break;
+        }
+
+        // Buscar respuesta existente del docente
+        let teacherResponse = assignment.responses.find(r => 
+            r.user.toString() === teacherId
+        );
+
+        if (status === 'pending') {
+            // Si se establece como pendiente, eliminar la respuesta existente
+            if (teacherResponse) {
+                assignment.responses = assignment.responses.filter(r => 
+                    r.user.toString() !== teacherId
+                );
+            }
+        } else {
+            // Para otros estados, crear o actualizar la respuesta
+            if (teacherResponse) {
+                // Actualizar respuesta existente
+                teacherResponse.submissionStatus = submissionStatus;
+                teacherResponse.status = responseStatus;
+                teacherResponse.submittedAt = submittedAt;
+            } else {
+                // Crear nueva respuesta
+                assignment.responses.push({
+                    user: teacherId,
+                    files: [],
+                    submittedAt: submittedAt,
+                    submissionStatus: submissionStatus,
+                    status: responseStatus
+                });
+            }
+        }
+
+        // Actualizar timestamp de modificación
+        assignment.updatedAt = now;
+        assignment.updatedBy = req.user._id;
+
+        await assignment.save();
+
+        console.log('✅ Estado de docente actualizado exitosamente');
+
+        res.json({
+            success: true,
+            message: 'Estado del docente actualizado exitosamente'
+        });
+
+    } catch (error) {
+        console.error('❌ Error actualizando estado del docente:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error interno del servidor'
+        });
+    }
+};

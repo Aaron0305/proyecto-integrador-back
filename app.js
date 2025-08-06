@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 import usersRoutes from './routes/users.js';
 import semestresRoutes from './routes/semestres.js';
 import statsRoutes from './routes/statsRoutes.js';
+import assignmentRoutes from './routes/assignmentRoutes.js';
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use((req, res, next) => {
 app.use('/api/users', usersRoutes);
 app.use('/api/semestres', semestresRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/assignments', assignmentRoutes);
 
 // Conexión a MongoDB
 mongoose.connect('mongodb://localhost:27017/medidor', {
