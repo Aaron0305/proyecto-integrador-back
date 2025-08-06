@@ -435,23 +435,69 @@ export const getFilteredAssignments = async (req, res) => {
 export const getTeacherAssignmentStats = async (req, res) => {
     try {
         const userId = req.user._id;
-        const now = new Date();
         
-        // Obtener todas las asignaciones del docente
+        console.log('📊 Calculando estadísticas para docente:', req.user.email);
+        console.log('📋 ID del docente:', userId);
+
+        // Obtener todas las asignaciones del docente con respuestas populadas
         const assignments = await Assignment.find({
             assignedTo: userId
+        }).populate('responses.user', 'nombre apellidoPaterno apellidoMaterno email');
+
+        console.log(`📊 Total de asignaciones encontradas: ${assignments.length}`);
+
+        // Calcular estadísticas considerando las respuestas individuales del docente
+        const total = assignments.length;
+        let pending = 0;
+        let completed = 0;
+        let completedLate = 0;
+        let notDelivered = 0;
+
+        assignments.forEach(assignment => {
+            // Buscar respuesta específica del docente actual
+            const teacherResponse = assignment.responses.find(r => 
+                r.user._id.toString() === userId.toString()
+            );
+
+            if (teacherResponse) {
+                // Si existe respuesta, usar el mapeo de estados de la respuesta
+                if (teacherResponse.status === 'submitted' && teacherResponse.submissionStatus === 'on-time') {
+                    completed++;
+                } else if (teacherResponse.status === 'submitted' && teacherResponse.submissionStatus === 'late') {
+                    completedLate++;
+                } else if (teacherResponse.submissionStatus === 'closed' || (teacherResponse.status === 'reviewed' && !teacherResponse.submittedAt)) {
+                    notDelivered++;
+                } else {
+                    pending++;
+                }
+            } else {
+                // Si no hay respuesta, usar el estado base de la asignación
+                switch(assignment.status) {
+                    case 'completed':
+                        completed++;
+                        break;
+                    case 'completed-late':
+                        completedLate++;
+                        break;
+                    case 'not-delivered':
+                        notDelivered++;
+                        break;
+                    case 'pending':
+                    case 'active':
+                    default:
+                        pending++;
+                        break;
+                }
+            }
         });
 
-        // Calcular estadísticas
-        const total = assignments.length;
-        const completed = assignments.filter(a => a.status === 'completed').length;
-        
-        // Filtrar asignaciones pendientes y vencidas
-        const pendingAssignments = assignments.filter(a => a.status === 'pending');
-        const pending = pendingAssignments.filter(a => new Date(a.dueDate) > now).length;
-        const overdue = pendingAssignments.filter(a => new Date(a.dueDate) <= now).length;
-
-        console.log('Estadísticas calculadas:', { total, pending, completed, overdue }); // Para debug
+        console.log('📊 Estadísticas calculadas (con respuestas individuales):', { 
+            total, 
+            pending, 
+            completed, 
+            completedLate, 
+            notDelivered 
+        });
 
         res.status(200).json({
             success: true,
@@ -459,7 +505,8 @@ export const getTeacherAssignmentStats = async (req, res) => {
                 total,
                 pending,
                 completed,
-                overdue
+                completedLate,
+                notDelivered
             }
         });
     } catch (error) {
@@ -475,41 +522,28 @@ export const getTeacherAssignmentStats = async (req, res) => {
 export const getTeacherFilteredAssignments = async (req, res) => {
     try {
         const { status, search, sort = '-createdAt', page = 1, limit = 10 } = req.query;
-        const query = { assignedTo: req.user._id };
+        const userId = req.user._id;
         const now = new Date();
 
         console.log('🔍 Obteniendo asignaciones para docente:', req.user.email);
         console.log('📋 Filtros recibidos:', { status, search, sort });
 
-        // Aplicar filtro de estado
-        if (status && status !== 'all') {
-            if (status === 'vencido') {
-                // Para vencidas: mostrar asignaciones activas o pendientes que pasaron su fecha de vencimiento
-                query.$or = [
-                    { status: 'pending', dueDate: { $lt: now } },
-                    { status: 'active', dueDate: { $lt: now } }
-                ];
-            } else if (status === 'pending') {
-                // Para pendientes: mostrar asignaciones activas o pendientes que NO han pasado su fecha de vencimiento
-                query.$or = [
-                    { status: 'pending', dueDate: { $gt: now } },
-                    { status: 'active', dueDate: { $gt: now } }
-                ];
-            } else if (status === 'completed') {
-                // Para completadas: mostrar solo las completadas sin importar la fecha
-                query.status = 'completed';
-            }
-        } else {
-            // Si no hay filtro específico, mostrar todas las asignaciones relevantes para el docente
-            query.status = { $in: ['pending', 'active', 'completed'] };
-        }
+        // Construir query base - buscar asignaciones asignadas al docente
+        let query = { assignedTo: userId };
+
+        // Para filtros de estado, NO aplicar filtro directo al query porque cada docente puede tener un estado individual
+        // El filtrado se hará después basándose en las respuestas individuales
+        const statusFilter = status && status !== 'all' ? status : null;
 
         // Aplicar búsqueda si existe
         if (search) {
-            query.$or = [
-                { title: { $regex: search, $options: 'i' } },
-                { description: { $regex: search, $options: 'i' } }
-            ];
+            query.$and = query.$and || [];
+            query.$and.push({
+                $or: [
+                    { title: { $regex: search, $options: 'i' } },
+                    { description: { $regex: search, $options: 'i' } }
+                ]
+            });
         }
 
         console.log('🔎 Query construida:', JSON.stringify(query, null, 2));
@@ -526,54 +560,102 @@ export const getTeacherFilteredAssignments = async (req, res) => {
         console.log(`📊 Asignaciones encontradas: ${assignments.length} de ${total} total`);
 
         // Procesar las asignaciones para incluir el estado específico del docente actual
-        const processedAssignments = assignments.map(assignment => {
+        let processedAssignments = assignments.map(assignment => {
             const assignmentObj = assignment.toObject();
             
             // Buscar la respuesta específica del docente actual
             const teacherResponse = assignment.responses.find(
-                response => response.user._id.toString() === req.user._id.toString()
+                response => response.user._id.toString() === userId.toString()
             );
             
+            let teacherSpecificStatus = 'pending'; // Estado por defecto
+            
             if (teacherResponse) {
-                // Si existe una respuesta, incluir la información del estado actualizado por el admin
+                // Si existe una respuesta, mapear el estado usando la misma lógica que en getTeachersStatusForAssignment
+                if (teacherResponse.status === 'submitted' && teacherResponse.submissionStatus === 'on-time') {
+                    teacherSpecificStatus = 'completed';
+                } else if (teacherResponse.status === 'submitted' && teacherResponse.submissionStatus === 'late') {
+                    teacherSpecificStatus = 'completed-late';
+                } else if (teacherResponse.submissionStatus === 'closed' || (teacherResponse.status === 'reviewed' && !teacherResponse.submittedAt)) {
+                    teacherSpecificStatus = 'not-delivered';
+                } else {
+                    teacherSpecificStatus = 'pending';
+                }
+                
                 assignmentObj.teacherStatus = {
                     submissionStatus: teacherResponse.submissionStatus,
                     status: teacherResponse.status,
                     submittedAt: teacherResponse.submittedAt,
-                    adminUpdated: true
+                    adminUpdated: true,
+                    mappedStatus: teacherSpecificStatus
                 };
                 
                 console.log(`✅ "${assignment.title}" - Estado específico del docente:`, {
                     status: teacherResponse.status,
-                    submissionStatus: teacherResponse.submissionStatus
+                    submissionStatus: teacherResponse.submissionStatus,
+                    mappedStatus: teacherSpecificStatus
                 });
             } else {
                 // Si no existe respuesta, usar el estado base de la asignación
+                teacherSpecificStatus = assignment.status === 'active' ? 'pending' : assignment.status;
+                
+                // Para vencidas, verificar la fecha si no hay respuesta
+                if (teacherSpecificStatus === 'pending' && new Date(assignment.dueDate) < now) {
+                    teacherSpecificStatus = 'vencido';
+                }
+                
                 assignmentObj.teacherStatus = {
                     submissionStatus: null,
-                    status: assignment.status === 'active' ? 'pending' : assignment.status,
+                    status: teacherSpecificStatus,
                     submittedAt: null,
-                    adminUpdated: false
+                    adminUpdated: false,
+                    mappedStatus: teacherSpecificStatus
                 };
                 
                 console.log(`📋 "${assignment.title}" - Estado base (sin respuesta):`, {
                     statusOriginal: assignment.status,
-                    statusParaDocente: assignment.status === 'active' ? 'pending' : assignment.status
+                    statusParaDocente: teacherSpecificStatus
                 });
             }
             
             return assignmentObj;
         });
 
-        console.log(`📤 Enviando ${processedAssignments.length} asignaciones al docente ${req.user.email}`);
+        // Aplicar filtro de estado DESPUÉS de mapear los estados individuales
+        if (statusFilter) {
+            processedAssignments = processedAssignments.filter(assignment => {
+                const mappedStatus = assignment.teacherStatus.mappedStatus;
+                
+                switch(statusFilter) {
+                    case 'pending':
+                        return mappedStatus === 'pending';
+                    case 'completed':
+                        return mappedStatus === 'completed';
+                    case 'completed-late':
+                        return mappedStatus === 'completed-late';
+                    case 'not-delivered':
+                        return mappedStatus === 'not-delivered';
+                    case 'vencido':
+                        return mappedStatus === 'vencido';
+                    default:
+                        return mappedStatus === statusFilter;
+                }
+            });
+            
+            console.log(`🔽 Después del filtro "${statusFilter}": ${processedAssignments.length} asignaciones`);
+        }
+
+        // Recalcular el total y paginación basándose en los resultados filtrados
+        const filteredTotal = statusFilter ? processedAssignments.length : total;
+        const totalPages = Math.ceil(filteredTotal / parseInt(limit));
 
         res.status(200).json({
             success: true,
             assignments: processedAssignments,
             pagination: {
                 currentPage: parseInt(page),
-                totalPages: Math.ceil(total / parseInt(limit)),
-                totalItems: total
+                totalPages: totalPages,
+                totalItems: filteredTotal
             }
         });
     } catch (error) {
@@ -699,6 +781,8 @@ export const getAdminAllAssignments = async (req, res) => {
             teacherId
         } = req.query;
 
+        console.log('🔍 Admin query params:', { status, search, sort, page, limit, teacherId });
+
         // Construir filtros
         const filters = {};
         
@@ -706,20 +790,16 @@ export const getAdminAllAssignments = async (req, res) => {
         console.log('🔍 Status filter received:', status);
         
         if (status !== 'all') {
-            if (status === 'overdue') {
-                // Para vencidas: status = pending Y dueDate < now
-                filters.status = 'pending';
-                filters.dueDate = { $lt: new Date() };
-                console.log('📅 Overdue filter applied:', filters);
-            } else if (status === 'pending') {
-                // Para pendientes: status = pending Y dueDate >= now
-                filters.status = 'pending';
-                filters.dueDate = { $gte: new Date() };
-                console.log('📅 Pending filter applied:', filters);
-            } else {
-                // Para otros estados (completed, etc.)
+            // Para los nuevos estados específicos
+            if (status === 'completed' || status === 'completed-late' || status === 'not-delivered' || status === 'pending') {
                 filters.status = status;
                 console.log('📅 Status filter applied:', filters);
+            } else if (status === 'overdue') {
+                // Para vencidas: asignaciones pendientes que pasaron su fecha límite
+                const now = new Date();
+                filters.status = 'pending';
+                filters.dueDate = { $lt: now };
+                console.log('⚠️ Overdue filter applied:', filters);
             }
         }
 
@@ -730,16 +810,22 @@ export const getAdminAllAssignments = async (req, res) => {
             ];
         }
 
+        // Filtro por docente - CORREGIDO
         if (teacherId && teacherId !== 'all') {
-            filters.assignedTo = { $in: [teacherId] };
+            console.log('🎯 Filtering by teacher:', teacherId);
+            filters.assignedTo = teacherId;
         }
+
+        console.log('🔎 Final filters:', JSON.stringify(filters, null, 2));
 
         // Configurar paginación
         const pageNum = parseInt(page);
         const limitNum = parseInt(limit);
         const skip = (pageNum - 1) * limitNum;
 
-        // Obtener asignaciones con paginación
+        console.log('📄 Pagination:', { pageNum, limitNum, skip });
+
+        // Obtener asignaciones con paginación - CORREGIDO: populamos assignedTo después del filtro
         const assignments = await Assignment.find(filters)
             .populate('assignedTo', 'nombre apellidoPaterno apellidoMaterno email')
             .populate('createdBy', 'nombre apellidoPaterno apellidoMaterno email')
@@ -752,11 +838,20 @@ export const getAdminAllAssignments = async (req, res) => {
         const total = await Assignment.countDocuments(filters);
         const totalPages = Math.ceil(total / limitNum);
 
+        console.log('📊 Results:', { 
+            totalFound: assignments.length, 
+            totalInDB: total, 
+            totalPages,
+            currentPage: pageNum
+        });
+
         // Obtener lista de profesores para filtros
         const teachers = await User.find({ role: 'docente' })
             .select('nombre apellidoPaterno apellidoMaterno email')
             .sort('nombre')
             .lean();
+
+        console.log('👥 Teachers for filter:', teachers.length);
 
         res.json({
             success: true,
@@ -797,16 +892,18 @@ export const getAdminAssignmentStats = async (req, res) => {
         // Obtener estadísticas generales de asignaciones
         const totalAssignments = await Assignment.countDocuments();
         const completedAssignments = await Assignment.countDocuments({ status: 'completed' });
+        const completedLateAssignments = await Assignment.countDocuments({ status: 'completed-late' });
+        const notDeliveredAssignments = await Assignment.countDocuments({ status: 'not-delivered' });
         const pendingAssignments = await Assignment.countDocuments({ status: 'pending' });
         
-        // Asignaciones vencidas (pending y fecha de vencimiento pasada)
+        // Calcular asignaciones vencidas (pendientes que pasaron su fecha límite)
         const now = new Date();
         const overdueAssignments = await Assignment.countDocuments({
             status: 'pending',
             dueDate: { $lt: now }
         });
-
-        // Asignaciones por vencer en 24 horas
+        
+        // Asignaciones por vencer en 24 horas (solo pendientes)
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const dueSoonAssignments = await Assignment.countDocuments({
@@ -880,10 +977,12 @@ export const getAdminAssignmentStats = async (req, res) => {
                 overview: {
                     total: totalAssignments,
                     completed: completedAssignments,
+                    'completed-late': completedLateAssignments,
+                    'not-delivered': notDeliveredAssignments,
                     pending: pendingAssignments,
                     overdue: overdueAssignments,
                     dueSoon: dueSoonAssignments,
-                    completionRate: totalAssignments > 0 ? ((completedAssignments / totalAssignments) * 100).toFixed(1) : 0
+                    completionRate: totalAssignments > 0 ? (((completedAssignments + completedLateAssignments) / totalAssignments) * 100).toFixed(1) : 0
                 },
                 teacherStats
             }
@@ -1789,20 +1888,24 @@ export const getTeachersStatusForAssignment = async (req, res) => {
             });
         }
 
-        // Construir lista de docentes con sus estados usando los valores correctos del enum
+        // Construir lista de docentes con sus estados usando el campo status directamente
         const teachersStatus = assignment.assignedTo.map(teacher => {
             const response = assignment.responses.find(r => 
                 r.user._id.toString() === teacher._id.toString()
             );
 
-            let status = 'pending';
-            if (response && response.submissionStatus) {
-                if (response.submissionStatus === 'on-time' && response.status === 'submitted') {
+            // Mapear el estado interno del backend al estado esperado por el frontend
+            let status = 'pending'; // Por defecto
+            
+            if (response) {
+                if (response.status === 'submitted' && response.submissionStatus === 'on-time') {
                     status = 'completed';
-                } else if (response.submissionStatus === 'late') {
+                } else if (response.status === 'submitted' && response.submissionStatus === 'late') {
                     status = 'completed-late';
-                } else if (response.submissionStatus === 'closed') {
+                } else if (response.submissionStatus === 'closed' || (response.status === 'reviewed' && !response.submittedAt)) {
                     status = 'not-delivered';
+                } else {
+                    status = 'pending';
                 }
             }
 
@@ -1873,30 +1976,31 @@ export const updateTeacherStatusInAssignment = async (req, res) => {
 
         const now = new Date();
         
-        // Mapear estados del frontend al backend usando los valores correctos del enum
-        let submissionStatus = 'on-time'; // Valor por defecto válido
+        // Mapear estados del frontend al sistema interno del backend
+        let submissionStatus = 'on-time'; 
         let responseStatus = 'submitted';
         let submittedAt = null;
 
         switch (status) {
             case 'completed':
-                submissionStatus = 'on-time';  // Usar valor válido del enum
+                submissionStatus = 'on-time';  
                 responseStatus = 'submitted';
-                submittedAt = now;
+                submittedAt = now; // Marcar como entregado ahora
                 break;
             case 'completed-late':
-                submissionStatus = 'late';     // Usar valor válido del enum
+                submissionStatus = 'late';     
                 responseStatus = 'submitted';
-                submittedAt = now;
+                submittedAt = now; // Marcar como entregado tarde ahora
                 break;
             case 'not-delivered':
-                submissionStatus = 'closed';   // Usar valor válido del enum
-                responseStatus = 'reviewed';
-                submittedAt = null;
+                submissionStatus = 'closed';   
+                responseStatus = 'reviewed';   // Marcado como revisado porque no se entregó
+                submittedAt = null; // Sin fecha de entrega
                 break;
             case 'pending':
-                submissionStatus = 'on-time';  // Usar valor válido en lugar de null
-                responseStatus = 'submitted';
+                // Para pendiente, eliminar la respuesta existente en lugar de crearla
+                submissionStatus = null;  
+                responseStatus = null;
                 submittedAt = null;
                 break;
         }
@@ -1936,13 +2040,31 @@ export const updateTeacherStatusInAssignment = async (req, res) => {
         assignment.updatedAt = now;
         assignment.updatedBy = req.user._id;
 
+        // NO actualizar el estado base de la asignación para mantener la individualidad
+        // El estado se maneja por respuestas individuales, no por el estado general
         await assignment.save();
 
-        console.log('✅ Estado de docente actualizado exitosamente');
+        console.log('✅ Estado de docente actualizado exitosamente:', {
+            assignmentTitle: assignment.title,
+            teacherId,
+            newStatus: status,
+            submissionStatus,
+            responseStatus,
+            submittedAt
+        });
 
         res.json({
             success: true,
-            message: 'Estado del docente actualizado exitosamente'
+            message: `Estado del docente actualizado a "${status}" exitosamente`,
+            data: {
+                assignmentId: assignment._id,
+                teacherId,
+                status,
+                submissionStatus,
+                responseStatus,
+                submittedAt,
+                updatedAt: now
+            }
         });
 
     } catch (error) {
@@ -1953,3 +2075,85 @@ export const updateTeacherStatusInAssignment = async (req, res) => {
         });
     }
 };
+
+// FUNCIÓN COMENTADA: Esta función actualizaba el estado base de toda la asignación
+// pero necesitamos mantener estados individuales por docente sin afectar a otros
+/*
+// Función auxiliar para actualizar el estado base de la asignación según las respuestas individuales
+async function updateAssignmentStatusBasedOnResponses(assignment) {
+    try {
+        console.log(`🔄 Actualizando estado base de la asignación "${assignment.title}"`);
+        
+        // Si no hay docentes asignados, mantener el estado actual
+        if (!assignment.assignedTo || assignment.assignedTo.length === 0) {
+            console.log('   ⚪ No hay docentes asignados, manteniendo estado actual');
+            return;
+        }
+
+        // Contar respuestas por tipo
+        const responseStats = {
+            total: assignment.responses.length,
+            completed: 0,
+            completedLate: 0,
+            notDelivered: 0,
+            pending: assignment.assignedTo.length
+        };
+
+        // Analizar cada respuesta
+        assignment.responses.forEach(response => {
+            if (response.submissionStatus === 'on-time' && response.status === 'submitted') {
+                responseStats.completed++;
+                responseStats.pending--;
+            } else if (response.submissionStatus === 'late' && response.status === 'submitted') {
+                responseStats.completedLate++;
+                responseStats.pending--;
+            } else if (response.submissionStatus === 'closed') {
+                responseStats.notDelivered++;
+                responseStats.pending--;
+            }
+        });
+
+        console.log('   ��� Estadísticas de respuestas:', responseStats);
+
+        // Determinar el nuevo estado base
+        let newBaseStatus = assignment.status; // Estado actual por defecto
+
+        // NUEVA LÓGICA: Más flexible para filtros de administrador
+        // Priorizar estados que permitan que las asignaciones aparezcan en filtros apropiados
+        
+        if (responseStats.completed > 0) {
+            // Si hay al menos una entrega completada a tiempo, marcar como 'completed'
+            // Esto permite que aparezca en el filtro "Completadas" del admin
+            newBaseStatus = 'completed';
+            console.log('   💡 Hay entregas completadas -> estado "completed"');
+        } else if (responseStats.completedLate > 0) {
+            // Si hay entregas tardías pero ninguna a tiempo, marcar como 'completed-late'
+            newBaseStatus = 'completed-late';
+            console.log('   💡 Hay entregas tardías -> estado "completed-late"');
+        } else if (responseStats.notDelivered > 0 && responseStats.pending === 0) {
+            // Si todos los docentes asignados están marcados como no-entregados
+            newBaseStatus = 'not-delivered';
+            console.log('   💡 Todos marcados como no-entregados -> estado "not-delivered"');
+        } else if (responseStats.notDelivered > 0 && responseStats.pending > 0) {
+            // Hay algunos no-entregados pero otros aún pendientes
+            newBaseStatus = 'pending';
+            console.log('   💡 Mezcla de no-entregados y pendientes -> estado "pending"');
+        } else {
+            // Sin respuestas o solo pendientes
+            newBaseStatus = 'pending';
+            console.log('   💡 Sin respuestas definidas -> estado "pending"');
+        }
+
+        // Actualizar solo si cambió
+        if (newBaseStatus !== assignment.status) {
+            console.log(`   🔄 Cambiando estado base: "${assignment.status}" -> "${newBaseStatus}"`);
+            assignment.status = newBaseStatus;
+        } else {
+            console.log(`   ✅ Estado base se mantiene: "${assignment.status}"`);
+        }
+
+    } catch (error) {
+        console.error('❌ Error actualizando estado base de asignación:', error);
+    }
+}
+*/

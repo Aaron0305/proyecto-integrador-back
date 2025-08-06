@@ -37,7 +37,7 @@ const assignmentSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'completed', 'scheduled', 'active', 'cancelled', 'publication_error'],
+        enum: ['pending', 'completed', 'completed-late', 'not-delivered', 'scheduled', 'active', 'cancelled', 'publication_error'],
         default: 'pending'
     },
     // Campos para asignaciones programadas
