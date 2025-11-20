@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -19,6 +18,7 @@ import bulkRoutes from './routes/bulkRoutes.js';
 // Importar middlewares
 import errorHandler from './middleware/errorHandler.js';
 import { uploadConfig } from './config/upload.js';
+import connectDB from './config/db.js';
 
 // Configurar __dirname para ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -32,14 +32,30 @@ const PORT = process.env.PORT || 3001;
 
 // ========== MIDDLEWARES GLOBALES ==========
 
-// CORS configurado para desarrollo y producción
-const corsOrigins = process.env.NODE_ENV === 'production' 
-  ? [
-      process.env.FRONTEND_URL, 
-      process.env.CLIENT_URL,
-      process.env.CORS_ORIGIN
-    ].filter(Boolean)
-  : ['http://localhost:3000', 'http://localhost:5173'];
+const parseOrigins = (...values) =>
+  values
+    .filter(Boolean)
+    .flatMap((value) =>
+      value
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean)
+    );
+
+const defaultDevOrigins = ['http://localhost:3000', 'http://localhost:5173'];
+const envOrigins = parseOrigins(
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  process.env.CORS_ORIGIN,
+  process.env.CORS_ORIGINS
+);
+
+// Permite que producción y entorno local compartan la misma configuración.
+const corsOrigins = [...new Set([...envOrigins, ...defaultDevOrigins])];
+
+if (corsOrigins.length === 0) {
+  console.warn('⚠️  No se definieron orígenes CORS; se utilizarán los valores por defecto.');
+}
 
 app.use(cors({
   origin: corsOrigins,
@@ -58,26 +74,6 @@ uploadConfig.createUploadDirs();
 
 // Servir archivos estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ========== CONEXIÓN A BASE DE DATOS ==========
-
-const connectDB = async () => {
-  try {
-    const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/seguimiento_docentes';
-    
-    await mongoose.connect(mongoURI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-    
-    console.log('🟢 MongoDB conectado exitosamente');
-    console.log(`📍 Base de datos: ${mongoose.connection.name}`);
-    
-  } catch (error) {
-    console.error('🔴 Error conectando a MongoDB:', error.message);
-    process.exit(1);
-  }
-};
 
 // ========== RUTAS DE LA API ==========
 
