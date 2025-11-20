@@ -6,7 +6,6 @@
       "runtime": "nodejs18.x",
       "memory": 1024,
       "maxDuration": 10,
-      "bundle": false,
       "includeFiles": [
         "node_modules/@simplewebauthn/server/**",
         "node_modules/@simplewebauthn/types/**",
