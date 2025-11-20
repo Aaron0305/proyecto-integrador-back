@@ -1,23 +1,15 @@
 {
   "version": 2,
-  "name": "seguimiento-docentes-api",
-  "functions": {
-    "api/index.js": {
-      "runtime": "nodejs18.x",
-      "memory": 1024,
-      "maxDuration": 10,
-      "includeFiles": [
-        "node_modules/@simplewebauthn/server/**",
-        "node_modules/@simplewebauthn/types/**",
-        "package.json",
-        "package-lock.json"
-      ]
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
     }
-  },
-  "routes": [
-    { "src": "/(.*)", "dest": "/api/index.js" }
   ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
+    }
+  ]
 }
