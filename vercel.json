@@ -1,16 +1,22 @@
 {
   "version": 2,
   "name": "seguimiento-docentes-api",
-  "builds": [
-    {
-      "src": "server.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs18.x",
+      "memory": 1024,
+      "maxDuration": 10,
+      "bundle": false,
+      "includeFiles": [
+        "node_modules/@simplewebauthn/server/**",
+        "node_modules/@simplewebauthn/types/**",
+        "package.json",
+        "package-lock.json"
+      ]
     }
-  ],
+  },
   "routes": [
-    { "src": "/health", "dest": "/server.js" },
-    { "src": "/api/(.*)", "dest": "/server.js" },
-    { "src": "/(.*)", "dest": "/server.js" }
+    { "src": "/(.*)", "dest": "/api/index.js" }
   ],
   "env": {
     "NODE_ENV": "production"
