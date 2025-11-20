@@ -15,10 +15,12 @@ const router = express.Router();
 // Configuración WebAuthn
 const rpName = 'Sistema de Seguimiento de Docentes';
 const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
-const origin = process.env.NODE_ENV === 'production' ? 'https://your-domain.com' : 'http://localhost:5173';
+const origin = process.env.WEBAUTHN_ORIGIN || (process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : 'http://localhost:5173');
 
 /**
  * PASO 1: Generar opciones específicas para registro biométrico por usuario
+ * Parámetros opcionales:
+ * - authenticatorType: 'platform' | 'cross-platform' | 'both'
  */
 router.post('/registration-options', auth, async (req, res) => {
   try {
@@ -28,6 +30,10 @@ router.post('/registration-options', auth, async (req, res) => {
     }
 
     console.log('🔧 Generando opciones de registro para:', user.email);
+
+    // Obtener tipo de autenticador del request
+    const { authenticatorType = 'both' } = req.body;
+    console.log('🔧 Tipo de autenticador solicitado:', authenticatorType);
 
     // Obtener credenciales existentes para evitar re-registro
     const excludeCredentials = [];
@@ -47,20 +53,40 @@ router.post('/registration-options', auth, async (req, res) => {
     // Generar userID único basado en el ID del usuario
     const userIdBuffer = Buffer.from(user._id.toString(), 'utf8');
     
+    // Configurar autenticador según tipo solicitado
+    let authenticatorSelection = {
+      userVerification: 'required',
+      residentKey: 'preferred',
+      requireResidentKey: false
+    };
+
+    switch (authenticatorType) {
+      case 'platform':
+        // Solo autenticadores internos (Windows Hello, Touch ID, etc.)
+        authenticatorSelection.authenticatorAttachment = 'platform';
+        break;
+      case 'cross-platform':
+        // Solo autenticadores externos (USB, Bluetooth, etc.)
+        authenticatorSelection.authenticatorAttachment = 'cross-platform';
+        break;
+      case 'any':
+      case 'both':
+      default:
+        // Permitir ambos tipos - no especificar attachment
+        // Esto debería permitir que Windows Hello trate cada usuario por separado
+        break;
+    }
+
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
       userID: userIdBuffer,
       userName: user.email,
-      userDisplayName: `${user.nombre} ${user.apellidos}`,
+      userDisplayName: `${user.nombre} ${user.apellidoPaterno || ''} ${user.apellidoMaterno || ''}`.trim(),
       timeout: 60000,
       attestationType: 'none',
       excludeCredentials,
-      authenticatorSelection: {
-        userVerification: 'required',
-        residentKey: 'preferred',
-        requireResidentKey: false
-      },
+      authenticatorSelection,
       supportedAlgorithmIDs: [-7, -257]
     });
 
@@ -218,6 +244,125 @@ router.get('/test', async (req, res) => {
 });
 
 /**
+ * Toggle activar/desactivar biometría
+ */
+router.post('/toggle', auth, async (req, res) => {
+  try {
+    const { enable } = req.body;
+    const userId = req.user.id;
+
+    console.log(`🔄 [TOGGLE] ${enable ? 'Activando' : 'Desactivando'} biometría para usuario:`, req.user.email);
+
+    // Actualizar estado biométrico
+    await User.findByIdAndUpdate(userId, {
+      biometricEnabled: enable
+    });
+
+    const message = enable 
+      ? 'Autenticación biométrica activada exitosamente' 
+      : 'Autenticación biométrica desactivada exitosamente';
+
+    console.log(`✅ [TOGGLE] ${message}`);
+
+    res.json({
+      success: true,
+      message
+    });
+  } catch (error) {
+    console.error('❌ [TOGGLE] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al cambiar estado biométrico'
+    });
+  }
+});
+
+/**
+ * Diagnóstico de autenticadores disponibles
+ */
+router.get('/diagnostic', auth, async (req, res) => {
+  try {
+    console.log('🔬 [DIAGNOSTIC] Diagnóstico de autenticadores para usuario:', req.user.email);
+    
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+    }
+
+    // Información del usuario
+    const userInfo = {
+      id: user._id.toString(),
+      email: user.email,
+      totalAuthenticators: user.authenticators?.length || 0,
+      biometricEnabled: user.biometric_enabled || false
+    };
+
+    // Generar opciones de diagnóstico para diferentes tipos
+    const diagnosticResults = {};
+    
+    for (const type of ['platform', 'cross-platform', 'any']) {
+      try {
+        const userIdBuffer = Buffer.from(user._id.toString(), 'utf8');
+        
+        let authenticatorSelection = {
+          userVerification: 'required',
+          residentKey: 'preferred',
+          requireResidentKey: false
+        };
+        
+        if (type !== 'any') {
+          authenticatorSelection.authenticatorAttachment = type;
+        }
+
+        const options = await generateRegistrationOptions({
+          rpName,
+          rpID,
+          userID: userIdBuffer,
+          userName: user.email,
+          userDisplayName: `${user.nombre} ${user.apellidoPaterno || ''} ${user.apellidoMaterno || ''}`.trim(),
+          timeout: 60000,
+          attestationType: 'none',
+          excludeCredentials: [],
+          authenticatorSelection,
+          supportedAlgorithmIDs: [-7, -257]
+        });
+
+        diagnosticResults[type] = {
+          canGenerate: true,
+          challengeGenerated: !!options.challenge
+        };
+        
+      } catch (error) {
+        diagnosticResults[type] = {
+          canGenerate: false,
+          error: error.message
+        };
+      }
+    }
+
+    res.json({
+      success: true,
+      user: userInfo,
+      diagnostics: diagnosticResults,
+      recommendations: [
+        'Si solo funciona "platform", Windows Hello está controlando el autenticador',
+        'Si funciona "cross-platform", necesitas un autenticador externo',
+        'Para múltiples usuarios en mismo dispositivo, usa "cross-platform"'
+      ],
+      timestamp: new Date()
+    });
+
+  } catch (error) {
+    console.error('❌ [DIAGNOSTIC] Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error en diagnóstico', 
+      error: error.message 
+    });
+  }
+});
+
+/**
  * Consultar estado de dispositivos biométricos del usuario autenticado
  */
 router.get('/status', auth, async (req, res) => {
@@ -249,7 +394,7 @@ router.get('/status', auth, async (req, res) => {
       canRegisterMore: totalDevices < 5, // Límite de 5 dispositivos por usuario
       user: {
         email: user.email,
-        name: `${user.nombre} ${user.apellidos}`
+        name: `${user.nombre} ${user.apellidoPaterno || ''} ${user.apellidoMaterno || ''}`.trim()
       }
     };
     
@@ -352,7 +497,7 @@ router.put('/quick-login', async (req, res) => {
       success: true,
       message: 'Login exitoso',
       token,
-      user: { id: user._id, email: user.email, nombre: user.nombre, apellidos: user.apellidos, rol: user.rol }
+      user: { id: user._id, email: user.email, nombre: user.nombre, apellidoPaterno: user.apellidoPaterno, apellidoMaterno: user.apellidoMaterno, role: user.role }
     });
 
   } catch (error) {

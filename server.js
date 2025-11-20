@@ -32,12 +32,21 @@ const PORT = process.env.PORT || 3001;
 
 // ========== MIDDLEWARES GLOBALES ==========
 
-// CORS configurado para desarrollo
+// CORS configurado para desarrollo y producción
+const corsOrigins = process.env.NODE_ENV === 'production' 
+  ? [
+      process.env.FRONTEND_URL, 
+      process.env.CLIENT_URL,
+      process.env.CORS_ORIGIN
+    ].filter(Boolean)
+  : ['http://localhost:3000', 'http://localhost:5173'];
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173'],
+  origin: corsOrigins,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200 // Para compatibilidad con navegadores móviles
 }));
 
 // Parseo de JSON y URL encoded
