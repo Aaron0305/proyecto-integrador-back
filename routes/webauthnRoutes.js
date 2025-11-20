@@ -7,7 +7,7 @@ import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
   generateAuthenticationOptions,
-  verifyAuthenticationResponse
+  verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 
 const router = express.Router();
@@ -225,7 +225,7 @@ router.post('/register', auth, async (req, res) => {
  */
 router.get('/challenge', async (req, res) => {
   try {
-    console.log('🔑 [CHALLENGE] Solicitud recibida');
+    console.log('�� [CHALLENGE] Solicitud recibida');
     const challenge = crypto.randomBytes(32).toString('base64');
     console.log('✅ [CHALLENGE] Challenge generado');
     res.json({ challenge, timeout: 60000 });

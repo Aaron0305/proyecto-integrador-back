@@ -43,6 +43,7 @@ const parseOrigins = (...values) =>
     );
 
 const defaultDevOrigins = ['http://localhost:3000', 'http://localhost:5173'];
+const defaultProdOrigins = ['https://proyecto-integrador-front-three.vercel.app'];
 const envOrigins = parseOrigins(
   process.env.FRONTEND_URL,
   process.env.CLIENT_URL,
@@ -51,7 +52,7 @@ const envOrigins = parseOrigins(
 );
 
 // Permite que producción y entorno local compartan la misma configuración.
-const corsOrigins = [...new Set([...envOrigins, ...defaultDevOrigins])];
+const corsOrigins = [...new Set([...envOrigins, ...defaultDevOrigins, ...defaultProdOrigins])];
 
 if (corsOrigins.length === 0) {
   console.warn('⚠️  No se definieron orígenes CORS; se utilizarán los valores por defecto.');

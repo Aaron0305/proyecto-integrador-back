@@ -4,24 +4,32 @@
   "builds": [
     {
       "src": "server.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "package.json",
+          "package-lock.json",
+          "node_modules/@simplewebauthn/server/**",
+          "node_modules/@simplewebauthn/types/**"
+        ],
+        "bundle": false
+      }
     }
   ],
   "routes": [
-    {
-      "src": "/health",
-      "dest": "/server.js"
-    },
-    {
-      "src": "/api/(.*)",
-      "dest": "/server.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/server.js"
-    }
+    { "src": "/health", "dest": "/server.js" },
+    { "src": "/api/(.*)", "dest": "/server.js" },
+    { "src": "/(.*)", "dest": "/server.js" }
   ],
   "env": {
     "NODE_ENV": "production"
+  },
+  "functions": {
+    "api/**": {
+      "runtime": "nodejs18.x",
+      "memory": 1024,
+      "maxDuration": 10,
+      "includeFiles": "node_modules/@simplewebauthn/server/**"
+    }
   }
 }
