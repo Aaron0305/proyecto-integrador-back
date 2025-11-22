@@ -37,11 +37,11 @@ router.post('/registration-options', auth, async (req, res) => {
 
     // Obtener credenciales existentes para evitar re-registro
     const excludeCredentials = [];
-    
+
     if (user.biometric_credential_id) {
       excludeCredentials.push({ id: user.biometric_credential_id, type: 'public-key' });
     }
-    
+
     if (user.authenticators?.length > 0) {
       user.authenticators.forEach(auth => {
         if (auth.credentialID) {
@@ -52,7 +52,7 @@ router.post('/registration-options', auth, async (req, res) => {
 
     // Generar userID único basado en el ID del usuario
     const userIdBuffer = Buffer.from(user._id.toString(), 'utf8');
-    
+
     // Configurar autenticador según tipo solicitado
     let authenticatorSelection = {
       userVerification: 'required',
@@ -146,7 +146,7 @@ router.post('/register', auth, async (req, res) => {
       }
 
       const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
-      
+
       // Convertir a base64url
       const credentialIdString = Buffer.from(credentialID).toString('base64')
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -156,7 +156,7 @@ router.post('/register', auth, async (req, res) => {
       // Verificar si ya existe
       const existsInNew = user.biometric_credential_id === credentialIdString;
       const existsInOld = user.authenticators?.some(auth => auth.credentialID === credentialIdString);
-      
+
       if (existsInNew || existsInOld) {
         return res.status(400).json({
           success: false,
@@ -167,7 +167,7 @@ router.post('/register', auth, async (req, res) => {
 
       // Inicializar authenticators
       if (!user.authenticators) user.authenticators = [];
-      
+
       // Crear nuevo authenticator
       const newAuth = {
         credentialID: credentialIdString,
@@ -178,9 +178,9 @@ router.post('/register', auth, async (req, res) => {
         registeredAt: new Date(),
         lastUsed: new Date()
       };
-      
+
       user.authenticators.push(newAuth);
-      
+
       // Habilitar biométrico si es primera huella
       if (!user.biometric_enabled) {
         user.biometric_enabled = true;
@@ -189,22 +189,22 @@ router.post('/register', auth, async (req, res) => {
         user.biometric_credential_id = credentialIdString;
         user.biometric_counter = counter;
       }
-      
+
       // Limpiar challenge
       user.webauthn_challenge = undefined;
       user.webauthn_challenge_expires = undefined;
-      
+
       await user.save();
-      
+
       console.log('✅ Registrada huella para', user.email, '- Total:', user.authenticators.length);
-      
+
       res.json({
         success: true,
         message: 'Huella registrada correctamente',
         deviceName: newAuth.deviceName,
         totalDevices: user.authenticators.length
       });
-      
+
     } catch (verificationError) {
       console.error('❌ Error verificación:', verificationError);
       return res.status(400).json({
@@ -258,8 +258,8 @@ router.post('/toggle', auth, async (req, res) => {
       biometricEnabled: enable
     });
 
-    const message = enable 
-      ? 'Autenticación biométrica activada exitosamente' 
+    const message = enable
+      ? 'Autenticación biométrica activada exitosamente'
       : 'Autenticación biométrica desactivada exitosamente';
 
     console.log(`✅ [TOGGLE] ${message}`);
@@ -283,7 +283,7 @@ router.post('/toggle', auth, async (req, res) => {
 router.get('/diagnostic', auth, async (req, res) => {
   try {
     console.log('🔬 [DIAGNOSTIC] Diagnóstico de autenticadores para usuario:', req.user.email);
-    
+
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
@@ -299,17 +299,17 @@ router.get('/diagnostic', auth, async (req, res) => {
 
     // Generar opciones de diagnóstico para diferentes tipos
     const diagnosticResults = {};
-    
+
     for (const type of ['platform', 'cross-platform', 'any']) {
       try {
         const userIdBuffer = Buffer.from(user._id.toString(), 'utf8');
-        
+
         let authenticatorSelection = {
           userVerification: 'required',
           residentKey: 'preferred',
           requireResidentKey: false
         };
-        
+
         if (type !== 'any') {
           authenticatorSelection.authenticatorAttachment = type;
         }
@@ -331,7 +331,7 @@ router.get('/diagnostic', auth, async (req, res) => {
           canGenerate: true,
           challengeGenerated: !!options.challenge
         };
-        
+
       } catch (error) {
         diagnosticResults[type] = {
           canGenerate: false,
@@ -354,10 +354,10 @@ router.get('/diagnostic', auth, async (req, res) => {
 
   } catch (error) {
     console.error('❌ [DIAGNOSTIC] Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error en diagnóstico', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error en diagnóstico',
+      error: error.message
     });
   }
 });
@@ -368,7 +368,7 @@ router.get('/diagnostic', auth, async (req, res) => {
 router.get('/status', auth, async (req, res) => {
   try {
     console.log('🔍 [STATUS] Solicitud recibida para usuario:', req.user.id);
-    
+
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
@@ -376,7 +376,7 @@ router.get('/status', auth, async (req, res) => {
 
     const totalDevices = user.authenticators?.length || 0;
     const hasDevices = totalDevices > 0;
-    
+
     // Preparar información de dispositivos (sin claves públicas por seguridad)
     const devices = user.authenticators?.map((auth, index) => ({
       id: auth.credentialID,
@@ -385,9 +385,18 @@ router.get('/status', auth, async (req, res) => {
       lastUsed: auth.lastUsed
     })) || [];
 
+    // CORRECCIÓN: Solo devolver enabled:true si REALMENTE hay dispositivos
+    const isReallyEnabled = hasDevices && user.biometric_enabled;
+
+    // CORRECCIÓN: Solo devolver registeredAt si hay dispositivos
+    const registeredAt = hasDevices
+      ? (user.biometric_registered_at || user.authenticators[0]?.registeredAt)
+      : null;
+
     const statusResponse = {
       success: true,
-      biometricEnabled: user.biometric_enabled || false,
+      enabled: isReallyEnabled,  // Solo true si HAY dispositivos
+      registeredAt: registeredAt,  // Solo fecha si HAY dispositivos
       hasDevices,
       totalDevices,
       devices,
@@ -397,20 +406,22 @@ router.get('/status', auth, async (req, res) => {
         name: `${user.nombre} ${user.apellidoPaterno || ''} ${user.apellidoMaterno || ''}`.trim()
       }
     };
-    
+
     console.log('✅ [STATUS] Estado para', user.email, ':', {
-      biometricEnabled: statusResponse.biometricEnabled,
-      totalDevices: statusResponse.totalDevices
+      enabled: statusResponse.enabled,
+      hasDevices: statusResponse.hasDevices,
+      totalDevices: statusResponse.totalDevices,
+      registeredAt: statusResponse.registeredAt
     });
-    
+
     res.json(statusResponse);
 
   } catch (error) {
     console.error('❌ [STATUS] Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error consultando estado', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error consultando estado',
+      error: error.message
     });
   }
 });
@@ -421,7 +432,7 @@ router.get('/status', auth, async (req, res) => {
 router.delete('/delete', auth, async (req, res) => {
   try {
     console.log('🗑️ [DELETE] Solicitud de eliminación de dispositivos biométricos');
-    
+
     const user = await User.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
@@ -458,10 +469,10 @@ router.delete('/delete', auth, async (req, res) => {
 
   } catch (error) {
     console.error('❌ [DELETE] Error eliminando dispositivos:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Error eliminando dispositivos biométricos', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Error eliminando dispositivos biométricos',
+      error: error.message
     });
   }
 });
@@ -481,7 +492,7 @@ router.post('/quick-login', async (req, res) => {
 router.put('/quick-login', async (req, res) => {
   try {
     const { credentialId } = req.body;
-    
+
     let user = await User.findOne({ biometric_credential_id: credentialId });
     if (!user) {
       user = await User.findOne({ 'authenticators.credentialID': credentialId });
