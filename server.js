@@ -100,13 +100,21 @@ app.use('/api/daily-records', dailyRecordRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/bulk', bulkRoutes);
 
-// Ruta para servir el frontend en producción
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  });
+// Ruta para servir el frontend en producción (SOLO si está en el mismo servidor)
+// En nuestro caso, frontend está en Vercel, así que no hacer esto
+if (process.env.NODE_ENV === 'production' && process.env.SERVE_FRONTEND === 'true') {
+  const frontendPath = path.join(__dirname, '../client/build');
+  try {
+    app.use(express.static(frontendPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(frontendPath, 'index.html'));
+    });
+    console.log('📦 Sirviendo frontend desde:', frontendPath);
+  } catch (error) {
+    console.warn('⚠️ No se pudo servir frontend desde build:', error.message);
+  }
+} else if (process.env.NODE_ENV === 'production') {
+  console.log('📡 Frontend en servidor separado (Vercel). Backend solo sirve API.');
 }
 
 // Ruta 404 para APIs no encontradas

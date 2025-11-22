@@ -159,6 +159,15 @@ router.post('/register', auth, async (req, res) => {
 
       // Convertir de base64url a Buffer si es necesario
       const convertBase64UrlToBuffer = (input, fieldName = 'unknown') => {
+        console.log(`🔍 Procesando ${fieldName}:`, {
+          type: typeof input,
+          isBuffer: Buffer.isBuffer(input),
+          isUint8Array: input instanceof Uint8Array,
+          isString: typeof input === 'string',
+          isEmpty: !input,
+          value: typeof input === 'string' ? input.substring(0, 50) : String(input).substring(0, 50)
+        });
+
         if (!input) {
           console.log(`⚠️  Campo ${fieldName} está vacío`);
           return input;
@@ -170,17 +179,36 @@ router.post('/register', auth, async (req, res) => {
           return input;
         }
 
-        // Si no es string, convertir primero
-        let str = typeof input === 'string' ? input : String(input);
+        // Verificar que sea string antes de hacer replace
+        if (typeof input !== 'string') {
+          console.warn(`⚠️  Campo ${fieldName} no es string, es ${typeof input}`);
+          // Intentar convertir a string de forma segura
+          try {
+            if (input && typeof input.toString === 'function') {
+              input = input.toString();
+            } else {
+              input = String(input);
+            }
+            console.log(`✅ Convertido ${fieldName} a string`);
+          } catch (e) {
+            console.error(`❌ No se puede convertir ${fieldName} a string:`, e.message);
+            throw new Error(`No se puede convertir ${fieldName} a string`);
+          }
+        }
         
-        if (!str) {
-          console.log(`⚠️  Campo ${fieldName} se convirtió a string vacío`);
-          return str;
+        if (!input || input.length === 0) {
+          console.log(`⚠️  Campo ${fieldName} es string vacío después de conversión`);
+          return input;
         }
         
         try {
+          // Verificar que sea string antes de hacer replace
+          if (typeof input !== 'string') {
+            throw new Error(`Esperaba string pero recibí ${typeof input}`);
+          }
+          
           // Convertir base64url a base64 estándar
-          let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+          let base64 = input.replace(/-/g, '+').replace(/_/g, '/');
           // Agregar padding si es necesario
           while (base64.length % 4) {
             base64 += '=';
@@ -189,7 +217,11 @@ router.post('/register', auth, async (req, res) => {
           console.log(`✅ Campo ${fieldName} convertido correctamente (${buffer.length} bytes)`);
           return buffer;
         } catch (error) {
-          console.error(`❌ Error en convertBase64UrlToBuffer para ${fieldName}:`, error.message);
+          console.error(`❌ Error en convertBase64UrlToBuffer para ${fieldName}:`, {
+            message: error.message,
+            inputType: typeof input,
+            inputLength: typeof input === 'string' ? input.length : 'N/A'
+          });
           throw new Error(`Error al convertir ${fieldName}: ${error.message}`);
         }
       };
