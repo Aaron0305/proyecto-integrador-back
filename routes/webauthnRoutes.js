@@ -128,9 +128,42 @@ router.post('/register', auth, async (req, res) => {
     }
 
     try {
+      console.log('🔍 Respuesta recibida del cliente:', {
+        id: response.id ? response.id.substring(0, 50) : 'N/A',
+        hasResponse: !!response.response,
+        type: response.type
+      });
+
+      // Convertir de base64url a Buffer si es necesario
+      const convertBase64UrlToBuffer = (str) => {
+        if (!str) return str;
+        if (str instanceof Uint8Array) return str;
+        // Convertir base64url a base64 estándar
+        let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+        // Agregar padding si es necesario
+        while (base64.length % 4) {
+          base64 += '=';
+        }
+        return Buffer.from(base64, 'base64');
+      };
+
+      // Procesar la respuesta para convertir strings base64url a Buffers
+      const processedResponse = {
+        id: response.id,
+        rawId: convertBase64UrlToBuffer(response.rawId || response.id),
+        response: {
+          attestationObject: convertBase64UrlToBuffer(response.response.attestationObject),
+          clientDataJSON: convertBase64UrlToBuffer(response.response.clientDataJSON)
+        },
+        type: response.type,
+        clientExtensionResults: response.clientExtensionResults || {}
+      };
+
+      console.log('✅ Respuesta procesada correctamente');
+
       // Verificar usando SimpleWebAuthn
       const verification = await verifyRegistrationResponse({
-        response,
+        response: processedResponse,
         expectedChallenge: user.webauthn_challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
@@ -197,12 +230,24 @@ router.post('/register', auth, async (req, res) => {
       await user.save();
 
       console.log('✅ Registrada huella para', user.email, '- Total:', user.authenticators.length);
+      console.log('📊 Datos guardados:', {
+        credentialId: credentialIdString.substring(0, 50),
+        counter,
+        hasPublicKey: !!user.biometric_public_key,
+        biometricEnabled: user.biometric_enabled
+      });
 
       res.json({
         success: true,
         message: 'Huella registrada correctamente',
         deviceName: newAuth.deviceName,
-        totalDevices: user.authenticators.length
+        totalDevices: user.authenticators.length,
+        user: {
+          id: user._id,
+          email: user.email,
+          nombre: user.nombre,
+          biometricEnabled: user.biometric_enabled
+        }
       });
 
     } catch (verificationError) {
