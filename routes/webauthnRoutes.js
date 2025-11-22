@@ -14,8 +14,29 @@ const router = express.Router();
 
 // Configuración WebAuthn
 const rpName = 'Sistema de Seguimiento de Docentes';
-const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
+
+// Extraer RP_ID del ambiente o derivarlo de la URL
+let rpID = process.env.WEBAUTHN_RP_ID;
+if (!rpID) {
+  // Si no está configurado, intentar extraer del FRONTEND_URL
+  const frontendUrl = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? 'https://proyecto-integrador-front-three.vercel.app' : 'http://localhost:5173');
+  try {
+    const urlObj = new URL(frontendUrl);
+    rpID = urlObj.hostname; // Esto extrae solo el dominio sin protocolo
+  } catch (e) {
+    rpID = 'localhost';
+    console.warn('⚠️ No se pudo extraer RP_ID, usando localhost como fallback');
+  }
+}
+
 const origin = process.env.WEBAUTHN_ORIGIN || (process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : 'http://localhost:5173');
+
+console.log('🔐 WebAuthn Config:', {
+  rpName,
+  rpID,
+  origin,
+  NODE_ENV: process.env.NODE_ENV
+});
 
 /**
  * PASO 1: Generar opciones específicas para registro biométrico por usuario
@@ -131,29 +152,55 @@ router.post('/register', auth, async (req, res) => {
       console.log('🔍 Respuesta recibida del cliente:', {
         id: response.id ? response.id.substring(0, 50) : 'N/A',
         hasResponse: !!response.response,
-        type: response.type
+        type: response.type,
+        hasRawId: !!response.rawId,
+        rawIdType: typeof response.rawId
       });
 
       // Convertir de base64url a Buffer si es necesario
-      const convertBase64UrlToBuffer = (str) => {
-        if (!str) return str;
-        if (str instanceof Uint8Array) return str;
-        // Convertir base64url a base64 estándar
-        let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-        // Agregar padding si es necesario
-        while (base64.length % 4) {
-          base64 += '=';
+      const convertBase64UrlToBuffer = (input, fieldName = 'unknown') => {
+        if (!input) {
+          console.log(`⚠️  Campo ${fieldName} está vacío`);
+          return input;
         }
-        return Buffer.from(base64, 'base64');
+        
+        // Si ya es Buffer o Uint8Array, devolver tal cual
+        if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
+          console.log(`✅ Campo ${fieldName} ya es Buffer/Uint8Array`);
+          return input;
+        }
+
+        // Si no es string, convertir primero
+        let str = typeof input === 'string' ? input : String(input);
+        
+        if (!str) {
+          console.log(`⚠️  Campo ${fieldName} se convirtió a string vacío`);
+          return str;
+        }
+        
+        try {
+          // Convertir base64url a base64 estándar
+          let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+          // Agregar padding si es necesario
+          while (base64.length % 4) {
+            base64 += '=';
+          }
+          const buffer = Buffer.from(base64, 'base64');
+          console.log(`✅ Campo ${fieldName} convertido correctamente (${buffer.length} bytes)`);
+          return buffer;
+        } catch (error) {
+          console.error(`❌ Error en convertBase64UrlToBuffer para ${fieldName}:`, error.message);
+          throw new Error(`Error al convertir ${fieldName}: ${error.message}`);
+        }
       };
 
       // Procesar la respuesta para convertir strings base64url a Buffers
       const processedResponse = {
         id: response.id,
-        rawId: convertBase64UrlToBuffer(response.rawId || response.id),
+        rawId: convertBase64UrlToBuffer(response.rawId || response.id, 'rawId'),
         response: {
-          attestationObject: convertBase64UrlToBuffer(response.response.attestationObject),
-          clientDataJSON: convertBase64UrlToBuffer(response.response.clientDataJSON)
+          attestationObject: convertBase64UrlToBuffer(response.response.attestationObject, 'attestationObject'),
+          clientDataJSON: convertBase64UrlToBuffer(response.response.clientDataJSON, 'clientDataJSON')
         },
         type: response.type,
         clientExtensionResults: response.clientExtensionResults || {}
@@ -251,17 +298,59 @@ router.post('/register', auth, async (req, res) => {
       });
 
     } catch (verificationError) {
-      console.error('❌ Error verificación:', verificationError);
-      return res.status(400).json({
+      const errorDetails = {
+        timestamp: new Date().toISOString(),
+        name: verificationError.name,
+        message: verificationError.message,
+        code: verificationError.code,
+        stack: verificationError.stack
+      };
+
+      console.error('❌ ERROR CRÍTICO EN REGISTRO:', JSON.stringify(errorDetails, null, 2));
+      console.error('📋 Detalles completos del error:', errorDetails);
+      
+      let errorMessage = 'Error en verificación de la huella';
+      let statusCode = 400;
+      
+      if (verificationError.message?.includes('replace')) {
+        errorMessage = 'Error al procesar datos: formato de base64url inválido';
+        console.error('🔴 PROBLEMA: Datos de credencial en formato incorrecto');
+      } else if (verificationError.message?.includes('base64')) {
+        errorMessage = 'Error al decodificar datos de base64';
+        console.error('🔴 PROBLEMA: Base64 inválido');
+      } else if (verificationError.message?.includes('Expected')) {
+        errorMessage = 'Verificación fallida: datos no coinciden con lo esperado';
+        console.error('🔴 PROBLEMA: Datos de verificación no coinciden');
+      } else if (verificationError.message) {
+        errorMessage = verificationError.message;
+      }
+      
+      console.error('📤 Enviando respuesta de error al cliente:', {
+        statusCode,
+        message: errorMessage
+      });
+      
+      return res.status(statusCode).json({
         success: false,
-        message: 'Error en verificación',
-        error: verificationError.message
+        message: errorMessage,
+        error: verificationError.message,
+        code: 'VERIFICATION_ERROR',
+        timestamp: new Date().toISOString()
       });
     }
 
   } catch (error) {
-    console.error('❌ Error registro:', error);
-    res.status(500).json({ success: false, message: 'Error interno', error: error.message });
+    console.error('🔴 ERROR GENERAL EN REGISTRO:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error interno del servidor', 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
