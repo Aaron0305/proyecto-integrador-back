@@ -150,95 +150,46 @@ router.post('/register', auth, async (req, res) => {
 
     try {
       console.log('🔍 Respuesta recibida del cliente:', {
-        id: response.id ? response.id.substring(0, 50) : 'N/A',
-        hasResponse: !!response.response,
-        type: response.type,
-        hasRawId: !!response.rawId,
-        rawIdType: typeof response.rawId
+        hasResponse: !!response,
+        responseKeys: response ? Object.keys(response) : [],
+        hasNestedResponse: !!response?.response,
+        id: typeof response?.id,
+        rawId: typeof response?.rawId,
+        type: response?.type
       });
 
-      // Convertir de base64url a Buffer si es necesario
-      const convertBase64UrlToBuffer = (input, fieldName = 'unknown') => {
-        console.log(`🔍 Procesando ${fieldName}:`, {
-          type: typeof input,
-          isBuffer: Buffer.isBuffer(input),
-          isUint8Array: input instanceof Uint8Array,
-          isString: typeof input === 'string',
-          isEmpty: !input,
-          value: typeof input === 'string' ? input.substring(0, 50) : String(input).substring(0, 50)
-        });
-
-        if (!input) {
-          console.log(`⚠️  Campo ${fieldName} está vacío`);
-          return input;
+      // SimpleWebAuthn ya devuelve en base64url, solo convertir a Buffer para verificación
+      const base64UrlToBuffer = (str) => {
+        if (!str) return str;
+        if (typeof str !== 'string') {
+          console.warn('⚠️ Recibido no-string:', typeof str);
+          str = String(str);
         }
-        
-        // Si ya es Buffer o Uint8Array, devolver tal cual
-        if (Buffer.isBuffer(input) || input instanceof Uint8Array) {
-          console.log(`✅ Campo ${fieldName} ya es Buffer/Uint8Array`);
-          return input;
-        }
-
-        // Verificar que sea string antes de hacer replace
-        if (typeof input !== 'string') {
-          console.warn(`⚠️  Campo ${fieldName} no es string, es ${typeof input}`);
-          // Intentar convertir a string de forma segura
-          try {
-            if (input && typeof input.toString === 'function') {
-              input = input.toString();
-            } else {
-              input = String(input);
-            }
-            console.log(`✅ Convertido ${fieldName} a string`);
-          } catch (e) {
-            console.error(`❌ No se puede convertir ${fieldName} a string:`, e.message);
-            throw new Error(`No se puede convertir ${fieldName} a string`);
-          }
-        }
-        
-        if (!input || input.length === 0) {
-          console.log(`⚠️  Campo ${fieldName} es string vacío después de conversión`);
-          return input;
-        }
-        
         try {
-          // Verificar que sea string antes de hacer replace
-          if (typeof input !== 'string') {
-            throw new Error(`Esperaba string pero recibí ${typeof input}`);
-          }
-          
-          // Convertir base64url a base64 estándar
-          let base64 = input.replace(/-/g, '+').replace(/_/g, '/');
-          // Agregar padding si es necesario
+          let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
           while (base64.length % 4) {
             base64 += '=';
           }
-          const buffer = Buffer.from(base64, 'base64');
-          console.log(`✅ Campo ${fieldName} convertido correctamente (${buffer.length} bytes)`);
-          return buffer;
-        } catch (error) {
-          console.error(`❌ Error en convertBase64UrlToBuffer para ${fieldName}:`, {
-            message: error.message,
-            inputType: typeof input,
-            inputLength: typeof input === 'string' ? input.length : 'N/A'
-          });
-          throw new Error(`Error al convertir ${fieldName}: ${error.message}`);
+          return Buffer.from(base64, 'base64');
+        } catch (e) {
+          console.error('❌ Error en base64UrlToBuffer:', e.message, 'input type:', typeof str);
+          throw e;
         }
       };
 
-      // Procesar la respuesta para convertir strings base64url a Buffers
+      // Preparar response para SimpleWebAuthn - espera Buffers para ciertos campos
       const processedResponse = {
-        id: response.id,
-        rawId: convertBase64UrlToBuffer(response.rawId || response.id, 'rawId'),
+        id: response.id,  // string base64url
+        rawId: base64UrlToBuffer(response.rawId),  // Buffer
         response: {
-          attestationObject: convertBase64UrlToBuffer(response.response.attestationObject, 'attestationObject'),
-          clientDataJSON: convertBase64UrlToBuffer(response.response.clientDataJSON, 'clientDataJSON')
+          attestationObject: base64UrlToBuffer(response.response.attestationObject),  // Buffer
+          clientDataJSON: base64UrlToBuffer(response.response.clientDataJSON)  // Buffer
         },
         type: response.type,
         clientExtensionResults: response.clientExtensionResults || {}
       };
 
-      console.log('✅ Respuesta procesada correctamente');
+      console.log('✅ Response procesado para verificación');
 
       // Verificar usando SimpleWebAuthn
       const verification = await verifyRegistrationResponse({
